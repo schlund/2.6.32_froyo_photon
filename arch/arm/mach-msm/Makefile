@@ -211,7 +211,7 @@ obj-$(CONFIG_MACH_PHOTON) += board-photon-rfkill.o htc_bluetooth.o
 obj-$(CONFIG_MACH_PHOTON) += board-photon.o board-photon-keypad.o board-photon-panel.o
 obj-$(CONFIG_MACH_PHOTON) += board-photon-mmc.o board-photon-wifi.o board-photon-microp.o 
 #uncomment line if you want console at boot
-obj-$(CONFIG_MACH_PHOTON) += htc_fb_console.o fonts.o font_8x8.o 
+#obj-$(CONFIG_MACH_PHOTON) += htc_fb_console.o fonts.o font_8x8.o 
 #font_pearl_8x8.o
 #ram_console.o font_8x8.o
 #dex_comm.o
