@@ -820,7 +820,7 @@ static struct file_operations qmi_fops = {
 };
 
 static struct qmi_ctxt qmi_device0 = {
-	.ch_name = "SMD_DATA5_CNTL",
+	.ch_name = "SMD_DATA2",
 	.misc = {
 		.minor = MISC_DYNAMIC_MINOR,
 		.name = "qmi0",
@@ -828,7 +828,7 @@ static struct qmi_ctxt qmi_device0 = {
 	}
 };
 static struct qmi_ctxt qmi_device1 = {
-	.ch_name = "SMD_DATA6_CNTL",
+	.ch_name = "SMD_DATA3",
 	.misc = {
 		.minor = MISC_DYNAMIC_MINOR,
 		.name = "qmi1",
@@ -836,7 +836,7 @@ static struct qmi_ctxt qmi_device1 = {
 	}
 };
 static struct qmi_ctxt qmi_device2 = {
-	.ch_name = "SMD_DATA7_CNTL",
+	.ch_name = "SMD_DATA4",
 	.misc = {
 		.minor = MISC_DYNAMIC_MINOR,
 		.name = "qmi2",
