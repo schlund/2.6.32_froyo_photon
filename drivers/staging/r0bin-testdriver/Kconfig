@@ -4,7 +4,7 @@
 #
 config R0BINTESTDRIVER
 	tristate "RobinTestDriver"
-	default m
+	default n
 	---help---
 		Test driver for photon devs.
 		
