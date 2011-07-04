@@ -1,0 +1,10 @@
+
+#
+#	Restricted Access Register Manager
+#
+config R0BINTESTDRIVER
+	tristate "RobinTestDriver"
+	default m
+	---help---
+		Test driver for photon devs.
+		
