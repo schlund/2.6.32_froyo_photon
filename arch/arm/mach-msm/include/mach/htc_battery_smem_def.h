@@ -3,6 +3,8 @@ struct smem_battery_resources {
 	unsigned short gpio_charger_enable;
 	unsigned short gpio_charger_current_select;
 	unsigned short gpio_ac_detect;
+	unsigned short gpio_charger_fast_dis;
+	unsigned short gpio_charger_fast_en;
 	unsigned smem_offset;
 	unsigned short smem_field_size;
 };

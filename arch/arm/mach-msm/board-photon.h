@@ -84,11 +84,12 @@
 #define LIBERTY_GPIO_COMPASS_INT_N       (37)
 #define LIBERTY_GPIO_SDMC_CD_N           (38)
 #define LIBERTY_GPIO_UP_INT_N            (39)
-/* Power */
-//#define PHOTON_USB_AC_PWR	 		(32) ?????  
-#define PHOTON_GPIO_CHARGE_EN_N		(44)
-
 #define LIBERTY_GPIO_CAM_I2C_SCL         (49)
+
+/* Battery */
+#define PHOTON_GPIO_CHARGE_EN_N		(23) //standard charger
+#define PHOTON_FAST_CHARGER_DIS		(17) //disabled when AC cable is plugged
+#define PHOTON_FAST_CHARGER_EN		(32) //enabled when AC cable is plugged
 
 /* WLAN SD data */
 #define LIBERTY_GPIO_SD_D3               (51)

@@ -180,7 +180,7 @@ static struct htc_headset_mgr_platform_data htc_headset_mgr_data = {
 //////////////////////////////////////////////
 #if defined(CONFIG_MSM_SMEM_BATTCHG)
 struct platform_device msm_device_htc_battery_smem = {
-	.name = "htc_battery_smem",
+	.name = "htc_battery",
 	.id = -1,
 };
 
@@ -189,9 +189,9 @@ static smem_batt_t htcphoton_htc_battery_smem_pdata = {
 	.gpio_battery_detect = 0, 
 	//r0bin: photon dont have AC charging cable
 	.gpio_ac_detect = 0,
-	//@TODO: need to find out the GPIO for power	
 	.gpio_charger_enable = PHOTON_GPIO_CHARGE_EN_N,
-	.gpio_charger_current_select = -1, 
+	.gpio_charger_fast_dis = PHOTON_FAST_CHARGER_DIS, 
+	.gpio_charger_fast_en = PHOTON_FAST_CHARGER_EN,
 	.smem_offset = 0xfc110,
 	.smem_field_size = 2,
 };
@@ -1085,7 +1085,7 @@ static void __init photon_init(void)
 
 	msm_acpu_clock_init(&liberty_clock_data);
 #ifdef CONFIG_MSM_SMEM_BATTCHG
-	//msm_proc_comm_wince_init();
+	msm_proc_comm_wince_init();
 	msm_device_htc_battery_smem.dev.platform_data = &htcphoton_htc_battery_smem_pdata;
 #endif
 	perflock_init(&liberty_perflock_data);
@@ -1096,7 +1096,7 @@ static void __init photon_init(void)
 			&msm_device_uart3.dev, 1,
 				MSM_GPIO_TO_INT(LIBERTY_GPIO_UART3_RX));
 #endif
- 
+
 	msm_add_devices();
 	printk("after msm_add_devices()\n");
 
