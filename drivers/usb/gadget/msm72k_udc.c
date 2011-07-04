@@ -834,9 +834,11 @@ static void handle_setup(struct usb_info *ui)
 		}
 	}
 	if (ctl.bRequestType == (USB_DIR_OUT | USB_TYPE_STANDARD)) {
-		if (ctl.bRequest == USB_REQ_SET_CONFIGURATION)
+		if (ctl.bRequest == USB_REQ_SET_CONFIGURATION) {
 			ui->online = !!ctl.wValue;
-		else if (ctl.bRequest == USB_REQ_SET_ADDRESS) {
+			if (ui->online && ui->usb_connected)
+				ui->usb_connected(1);
+		} else if (ctl.bRequest == USB_REQ_SET_ADDRESS) {
 			/* write address delayed (will take effect
 			** after the next IN txn)
 			*/
@@ -2119,6 +2121,9 @@ static void usb_do_work(struct work_struct *w)
 				writel(0x00080000, USB_USBCMD);
 				spin_unlock_irqrestore(&ui->lock, iflags);
 
+                if (ui->usb_connected)
+ 				   ui->usb_connected(0);
+
 				if (ui->connect_type != CONNECT_TYPE_NONE) {
 					ui->connect_type = CONNECT_TYPE_NONE;
 					queue_work(ui->usb_wq, &ui->notifier_work);
@@ -2169,7 +2174,7 @@ static void usb_do_work(struct work_struct *w)
 			 */
 			if ((flags & USB_FLAG_VBUS_ONLINE) && _vbus) {
 				pr_info("hsusb: OFFLINE -> ONLINE\n");
-
+		
 				if (ui->china_ac_detect)
 					charger_detect_by_uart(ui);
 				else {
@@ -2178,6 +2183,9 @@ static void usb_do_work(struct work_struct *w)
 					charger_detect(ui);
 				}
 
+                if (ui->usb_connected)
+					ui->usb_connected(2);
+				
 				ui->state = USB_STATE_ONLINE;
 				usb_do_work_check_vbus(ui);
 			}
