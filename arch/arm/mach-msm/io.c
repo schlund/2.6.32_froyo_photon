@@ -93,6 +93,12 @@ static struct map_desc msm_io_desc[] __initdata = {
 		.length =   MSM_RAMCONSOLE_SIZE,
 		.type =     MT_DEVICE,
 	},
+	{
+		.virtual =  (unsigned long)  MSM_SPLHOOD_BASE,
+		.pfn =      __phys_to_pfn(MSM_SPLHOOD_PHYS),
+		.length =   MSM_SPLHOOD_SIZE,
+		.type =     MT_DEVICE,
+	},
 	MSM_DEVICE(SDC2),
 };
 

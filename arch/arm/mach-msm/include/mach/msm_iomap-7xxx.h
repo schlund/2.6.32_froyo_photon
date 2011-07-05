@@ -159,4 +159,8 @@
 #define MSM_GPU_REG_SIZE      0x00020000
 #endif
 
+#define MSM_SPLHOOD_BASE         IOMEM(0xF9500000)
+#define MSM_SPLHOOD_PHYS         0x0
+#define MSM_SPLHOOD_SIZE         SZ_1M
+
 #endif
