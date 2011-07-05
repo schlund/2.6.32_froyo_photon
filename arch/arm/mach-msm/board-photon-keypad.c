@@ -49,12 +49,12 @@ static const unsigned short liberty_keymap[ARRAY_SIZE(liberty_col_gpios) *
 	[KEYMAP_INDEX(0, 1)] = KEY_VOLUMEDOWN,
 	[KEYMAP_INDEX(0, 2)] = KEY_RESERVED,
 
-	[KEYMAP_INDEX(1, 0)] = KEY_BACK,
-	[KEYMAP_INDEX(1, 1)] = KEY_SEND,
-	[KEYMAP_INDEX(1, 2)] = KEY_END,
+	[KEYMAP_INDEX(1, 0)] = KEY_RESERVED,
+	[KEYMAP_INDEX(1, 1)] = KEY_RESERVED,
+	[KEYMAP_INDEX(1, 2)] = KEY_RESERVED,
 
-	[KEYMAP_INDEX(2, 0)] = KEY_MENU,
-	[KEYMAP_INDEX(2, 1)] = KEY_HOME,
+	[KEYMAP_INDEX(2, 0)] = KEY_RESERVED,
+	[KEYMAP_INDEX(2, 1)] = KEY_RESERVED,
 	[KEYMAP_INDEX(2, 2)] = BTN_MOUSE, /* OJ_ACTION */
 };
 
@@ -89,14 +89,14 @@ static struct gpio_event_matrix_info liberty_keypad_matrix_info = {
 		  GPIOKPF_PRINT_UNMAPPED_KEYS /*|
 		   GPIOKPF_PRINT_MAPPED_KEYS */),
 	.setup_ninputs_gpio = liberty_matrix_inputs_gpio,
-//	.detect_phone_status = 1,
+	.detect_phone_status = 1,
 };
 
 static struct gpio_event_direct_entry liberty_keypad_nav_map[] = {
 	{
 		.gpio = LIBERTY_POWER_KEY,
-		.code = KEY_POWER
-//		.wakeup = 1,
+		.code = KEY_POWER,
+		.wakeup = 1,
 	},
 };
 
@@ -130,16 +130,16 @@ static struct gpio_event_info *liberty_keypad_info[] = {
 	&liberty_keypad_power_info.info,
 };
 
-/*int liberty_gpio_event_power(const struct gpio_event_platform_data *pdata, bool on)
+int liberty_gpio_event_power(const struct gpio_event_platform_data *pdata, bool on)
 {
        return 0;
-}*/
+}
 
 static struct gpio_event_platform_data liberty_keypad_data = {
 	.name = "liberty-keypad",
 	.info = liberty_keypad_info,
-	.info_count = ARRAY_SIZE(liberty_keypad_info)
-//	.power = liberty_gpio_event_power,
+	.info_count = ARRAY_SIZE(liberty_keypad_info),
+	.power = liberty_gpio_event_power,
 };
 
 static struct platform_device liberty_keypad_device = {
