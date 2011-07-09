@@ -74,8 +74,8 @@ static struct sBattery_Parameters* batt_param = (struct sBattery_Parameters*)&sB
 
 
 /* battery detail logger */
-#define HTC_BATTERY_BATTLOGGER		1
-//#undef HTC_BATTERY_BATTLOGGER
+//#define HTC_BATTERY_BATTLOGGER		1
+#undef HTC_BATTERY_BATTLOGGER
 
 #if HTC_BATTERY_BATTLOGGER
  #include <linux/rtc.h>
@@ -453,8 +453,9 @@ result:
 int htc_battery_status_update(u32 curr_level)
 {
 	int notify;
+#ifdef FAST_USB_CHARGE
 	unsigned charge = 0;
-
+#endif
 	if (!htc_battery_initial)
 		return 0;
 
@@ -517,7 +518,9 @@ int htc_cable_status_update(int status)
 		charger = DISABLE;
 #endif
 	}
+#ifdef ROBINDEBUG
 	printk("%s, vbus=%d,usbonline=%d status=%d\n",__func__,vbus_status,g_usb_online,status);
+#endif
 	last_source = htc_batt_info.rep.charging_source;
 
 	switch(status) {
@@ -579,7 +582,7 @@ and notify USB charging again when receiving usb connected notification from usb
 void notify_usb_connected(int online)
 {
 	printk(KERN_DEBUG "%s: online=%d\n", __func__, online);
-	printk("%s: online=%d\n", __func__, online);
+//	printk("%s: online=%d\n", __func__, online);
 
 	g_usb_online = online;
 	if (not_yet_started) return;
@@ -620,8 +623,10 @@ static int htc_battery_temperature_lut( int av_index )
 }
 
 //used for last charge_status
+#ifdef USE_AGING_ALGORITHM
 #define CHARGE_STATUS_AGESIZE 6
 static int charge_status_age[CHARGE_STATUS_AGESIZE];
+#endif
 static int old_level = 100;
 static int charge_curr_ref = 0;
 static long current_loaded_mAs = 0;
@@ -697,7 +702,9 @@ static void htc_battery_level_compute( struct battery_info_reply *buffer )
 		} else {
 			result = 0;
 		}
+#ifdef ROBINDEBUG
 		printk("%s: discharging, raw level=%d\n",__func__,result);
+#endif
 	}
 	//Algorithm for charge
 	else
@@ -709,21 +716,28 @@ static void htc_battery_level_compute( struct battery_info_reply *buffer )
 			current_loaded_mAs=0;
 			max_curr = 0;
 			stop_charge_counter = 0;
+#ifdef ROBINDEBUG
 			printk("%s: first time charging, old_level=%d, curr_ref=%d\n",__func__,old_level,charge_curr_ref);
+#endif
 		}else{
+			unsigned int udelta_msec;
 			mcurr_jiffies = jiffies;
 			//increment charge current (convert to mAh)
-			unsigned int udelta_msec= ((jiffies_to_msecs(mcurr_jiffies)/*/10*/)-old_time);
+			udelta_msec = ((jiffies_to_msecs(mcurr_jiffies)/*/10*/)-old_time);
 			//if time delta > 20sec, dont compute there is an error!
 			if(udelta_msec < 20000)
 			{
 				int delta_msec= (int)udelta_msec;
 				int delta_mAs = ((old_current * delta_msec)/1000);
 				current_loaded_mAs += delta_mAs;
+#ifdef ROBINDEBUG
 				printk("%s udelta_msec=%u delta_msec=%d old_current=%d delta_mAs=%d\n",
 						__func__,udelta_msec,delta_msec,old_current,delta_mAs);
+#endif
 			}else{
+#ifdef ROBINDEBUG
 				printk("%s udelta_msec=%u: jiffies corruption\n",__func__,udelta_msec);
+#endif
 			}
 		}
 		old_current = ccurrent;
@@ -735,8 +749,9 @@ static void htc_battery_level_compute( struct battery_info_reply *buffer )
 			
 		//compute percentage VS total battery capacity
 		result = ((charge_curr_ref + (current_loaded_mAs/3600))*100)/(BATT_CAPACITY_PHOTON-100);
+#ifdef ROBINDEBUG		
 		printk("%s: charging, raw level=%d, ccurrent=%d, charge_curr_ref=%d, current_loaded_mAh=%ld, TOTAL charged=%ld\n",__func__,result,ccurrent,charge_curr_ref,(current_loaded_mAs/3600),(charge_curr_ref + (current_loaded_mAs/3600)));
-		
+#endif
 		//if we compute it wrong, at least don't charge too much! (don't go below 100mA)
 		if((ccurrent < 100) && (max_curr > 100))
 			stop_charge_counter++;
@@ -746,7 +761,9 @@ static void htc_battery_level_compute( struct battery_info_reply *buffer )
 		if(stop_charge_counter >= 10)
 		{
 			result = 100;
+#ifdef ROBINDEBUG
 			printk("%s: charging, emergency stop, batt is full!\n",__func__);
+#endif
 		}
 	}
 
@@ -764,12 +781,6 @@ static void htc_battery_level_compute( struct battery_info_reply *buffer )
 		buffer->level = result;
 	}
                 
-//#if HTC_BATTERY_BATTLOGGER
-//	if(debug_mask&DEBUG_LOG)
-//		BATTLOG("STAT; level=;%d; level_old=;%d; level-calc=;%d; volt=;%d; temp=;%d; current=;%d; Charge=;%d; corr_volt=;%d; corr_temp_volt=;%d; discharge_volt_resist=;%d;\n", \
-//		buffer->level, old_level, result, buffer->batt_vol, buffer->batt_temp, buffer->batt_current, htc_batt_info.rep.charging_source, corrected_volt, temp_correct_volt, volt_discharge_resistor );
-//#endif
-
 	old_level = buffer->level;
 }
 
@@ -794,9 +805,11 @@ static void fix_batt_values(struct battery_info_reply *buffer) {
 
 void printBattBuff(struct battery_info_reply *buffer,char *txt)
 {
+#ifdef ROBINDEBUG
 	printk( "r0bin %s: batt_id=%d;volt=%d;tempRaw=%dC;temp=%dC;current=%d;discharge=%d;LEVEL=%d;charging src=%d;charging?%d;adc_range=%d\n",
 			txt,buffer->batt_id,buffer->batt_vol,buffer->batt_tempRAW,buffer->batt_temp,
 			buffer->batt_current,buffer->batt_discharge,buffer->level,buffer->charging_source,buffer->charging_enabled,htc_adc_range);
+#endif			
 		}
 
 /* Photon battery data corrections */
@@ -886,8 +899,9 @@ static int htc_get_batt_smem_info_5times(struct battery_info_reply *buffer)
 	current_sum = current_sum - current_lowest_val - current_highest_val;
 	buffer->batt_vol = volt_sum / 3;
 	buffer->batt_current = current_sum / 3;
-	
+#ifdef ROBINDEBUG
 	printk("%s, final vals: volt=%d curr=%d\n",__func__,buffer->batt_vol,buffer->batt_current);
+#endif
 	return 0;
 }
 
@@ -923,12 +937,16 @@ static int htc_get_batt_info(struct battery_info_reply *buffer)
 
 	//don't stress our driver! minimum interval = 1sec
 	time_now = jiffies_to_msecs(jiffies);
+#ifdef ROBINDEBUG
 	printk("%s: diff=%u ms, time_now=%u ms, time_stamp=%u ms, jiffies=%lu\n",__func__,(time_now - time_stamp),time_now, time_stamp,jiffies);
+#endif
 	if(time_stamp && ((time_now - time_stamp)<1000))
 	{
 		//if yes, no need to compute again: just copy previous computed values and exit!
 		memcpyBattInfo(&old_batt_info,buffer);
+#ifdef ROBINDEBUG
 		printk("%s: don't stress DEX, time diff=%u\n",__func__,(time_now - time_stamp));
+#endif
 		return 0;
 	}
 
