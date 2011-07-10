@@ -7,7 +7,7 @@
 #include <linux/ioctl.h>
 
 #define BMA150_I2C_NAME "bma150"
-#define BMA150_G_SENSOR_NAME "bma150_uP_spi"
+#define BMA150_G_SENSOR_NAME BMA150_I2C_NAME
 
 #define BMAIO				0xA1
 
@@ -57,6 +57,7 @@
 #define BMA_IOCTL_SET_CALI_MODE		_IOW(BMAIO, 0x39, short)
 #define BMA_IOCTL_READ_CALI_VALUE       _IOR(BMAIO, 0x3a, char[3])
 #define BMA_IOCTL_WRITE_CALI_VALUE      _IOW(BMAIO, 0x3b, int)
+#define BMA_IOCTL_ARE_YOU_SLEEPING      _IOR(BMAIO, 0x3c, short)
 
 /* range and bandwidth */
 #define BMA_RANGE_2G			0
@@ -77,12 +78,22 @@
 
 extern unsigned int gs_kvalue;
 
+
 struct bma150_platform_data {
 	int intr;
 	int microp_new_cmd;
 	int chip_layout;
 	int calibration_mode;
 	int gs_kvalue;
+	//r0bin: for asynchronous polling using input dev
+	struct input_dev *idev;
+	struct delayed_work work;
+	struct hrtimer timer;
+#ifdef CONFIG_ANDROID_POWER
+	android_suspend_lock_t suspend_lock;
+#endif
+	struct mutex mWorkLock;
+	int susp;
 };
 
 #endif
