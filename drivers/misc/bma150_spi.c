@@ -25,16 +25,31 @@
 #include <linux/platform_device.h>
 #include <mach/atmega_microp.h>
 
-struct early_suspend bma_early_suspend;
-
-static struct bma150_platform_data *this_pdata;
-
-static struct mutex gsensor_RW_mutex;
-static struct mutex gsensor_set_mode_mutex;
-
-static atomic_t PhoneOn_flag = ATOMIC_INIT(0);
 #define DEVICE_ACCESSORY_ATTR(_name, _mode, _show, _store) \
 struct device_attribute dev_attr_##_name = __ATTR(_name, _mode, _show, _store)
+#define MODULE_NAME "bma150"
+#define EVENT_TYPE_TEMPERATURE      ABS_THROTTLE
+#define BMA_POLL_TIMER_MS 200
+
+struct early_suspend bma_early_suspend;
+static struct bma150_platform_data *this_pdata;
+static struct mutex gsensor_RW_mutex;
+static struct mutex gsensor_set_mode_mutex;
+static atomic_t PhoneOn_flag = ATOMIC_INIT(0);
+
+//r0bin: added for asynchronous polling (input dev)
+static enum hrtimer_restart bma150_poll_timer(struct hrtimer *timer)
+{
+	struct bma150_platform_data *bma150_w;
+	bma150_w = container_of(timer, struct bma150_platform_data, timer);
+#ifdef CONFIG_ANDROID_POWER
+	android_lock_suspend(&bma150_w->suspend_lock);
+#endif
+	schedule_work(&bma150_w->work.work);
+	return HRTIMER_NORESTART;
+}
+
+
 static int spi_microp_enable(uint8_t on)
 {
 	int ret;
@@ -208,7 +223,7 @@ static int spi_bma150_TransRBuff(short *rbuf)
 		if (rbuf[2]&0x200)
 			rbuf[2] -= 1<<10;
 	}
-/*	printk("X=%d, Y=%d, Z=%d\n",rbuf[0],rbuf[1],rbuf[2]);*/
+	//printk("X=%d, Y=%d, Z=%d\n",rbuf[0],rbuf[1],rbuf[2]);
 
 /*	printk(KERN_DEBUG "%s: 0x%2.2X 0x%2.2X 0x%2.2X \
 0x%2.2X 0x%2.2X 0x%2.2X\n",
@@ -220,6 +235,20 @@ static int spi_bma150_TransRBuff(short *rbuf)
 	return 1;
 }
 
+static int spi_bma150_read_temp()
+{
+	char buffer[2];
+	int ret;
+
+	buffer[0] = TEMP_RD_REG;
+	ret = spi_gsensor_read(buffer);
+	if (ret < 0 )
+		return -EIO;
+	//temp correction
+	return buffer[1];
+}
+
+
 static int __spi_bma150_set_mode(char mode)
 {
 	char buffer[2] = "";
@@ -227,8 +256,18 @@ static int __spi_bma150_set_mode(char mode)
 	mutex_lock(&gsensor_set_mode_mutex);
 	if (mode == BMA_MODE_NORMAL) {
 		spi_microp_enable(1);
-		printk(KERN_INFO "%s: BMA get into NORMAL mode!\n",
-			__func__);
+		printk(KERN_INFO "%s: BMA get into NORMAL mode!\n",	__func__);
+		if (this_pdata)
+		{
+			//update suspend state
+			this_pdata->susp = 0;
+			//printk("%s: this_pdata=%x, susp=%d\n",__func__,this_pdata,this_pdata->susp);
+			//restart the timer
+			if(!hrtimer_active(&this_pdata->timer))
+				hrtimer_start(&this_pdata->timer,ktime_set(0, BMA_POLL_TIMER_MS*1000000),HRTIMER_MODE_REL);
+		}else{
+			//printk("%s: error, this_pdata=NULL\n",__func__);
+		}
 	}
 
 	buffer[0] = SMB150_CTRL_REG;
@@ -244,8 +283,18 @@ static int __spi_bma150_set_mode(char mode)
 
 	if (mode == BMA_MODE_SLEEP) {
 		spi_microp_enable(0);
-		printk(KERN_INFO "%s: BMA get into SLEEP mode!\n",
-			__func__);
+		printk(KERN_INFO "%s: BMA get into SLEEP mode!\n",	__func__);
+		if (this_pdata)
+		{
+			//update suspend state
+			this_pdata->susp = 1;
+			//printk("%s: this_pdata=%x, susp=%d\n",__func__,this_pdata,this_pdata->susp);
+			//stop the timer
+			if(hrtimer_active(&this_pdata->timer))
+				hrtimer_cancel(&this_pdata->timer);
+		}else{
+			//printk("%s: error, this_pdata=NULL\n",__func__);
+		}
 	}
 	mutex_unlock(&gsensor_set_mode_mutex);
 	return ret;
@@ -260,7 +309,7 @@ static int spi_bma150_open(struct inode *inode, struct file *file)
 static int spi_bma150_release(struct inode *inode, struct file *file)
 {
 	return 0;
-}
+} 
 
 static int spi_bma150_ioctl(struct inode *inode, struct file *file, unsigned int cmd,
 	   unsigned long arg)
@@ -271,6 +320,7 @@ static int spi_bma150_ioctl(struct inode *inode, struct file *file, unsigned int
 	int ret = -1;
 	short buf[8], temp;
 	int kbuf = 0;
+	
 
 	switch (cmd) {
 	case BMA_IOCTL_READ:
@@ -355,6 +405,14 @@ static int spi_bma150_ioctl(struct inode *inode, struct file *file, unsigned int
 		if (this_pdata)
 			this_pdata->calibration_mode = rwbuf[0];
 		break;
+	case BMA_IOCTL_ARE_YOU_SLEEPING:
+		if(this_pdata)
+		{
+			buf[0] = this_pdata->susp;
+		}else{
+			buf[0] = 0;
+		}
+		break;
 	default:
 		return -ENOTTY;
 	}
@@ -371,6 +429,10 @@ static int spi_bma150_ioctl(struct inode *inode, struct file *file, unsigned int
 		break;
 	case BMA_IOCTL_READ_CALI_VALUE:
 		if (copy_to_user(argp, &rwbuf, sizeof(rwbuf)))
+			return -EFAULT;
+		break;
+	case BMA_IOCTL_ARE_YOU_SLEEPING:
+		if (copy_to_user(argp, &buf, 1))
 			return -EFAULT;
 		break;
 	case BMA_IOCTL_GET_INT:
@@ -409,10 +471,9 @@ static void bma150_early_suspend(struct early_suspend *handler)
 {
 	int ret = 0;
 	if (!atomic_read(&PhoneOn_flag)) {
-	ret = __spi_bma150_set_mode(BMA_MODE_SLEEP);
+		ret = __spi_bma150_set_mode(BMA_MODE_SLEEP);
 	} else
 		printk(KERN_DEBUG "bma150_early_suspend: PhoneOn_flag is set\n");
-
 	/*printk(KERN_DEBUG
 		"%s: spi_bma150_set_mode returned = %d!\n",
 			__func__, ret);*/
@@ -493,6 +554,44 @@ err_create_class:
 	return ret;
 }
 
+
+//this function is called every x ms, gather accel data and send it as an event
+static void bma150_work(struct work_struct *work)
+{
+	short vals[3];
+	int x,y,z, temp;
+	struct bma150_platform_data *bma150_w;
+	
+	bma150_w = container_of(work, struct bma150_platform_data, work.work);
+	
+	mutex_lock(&bma150_w->mWorkLock);
+	
+	//get acceleration values
+	vals[0] = vals[1] = vals[2] = 0;
+	spi_bma150_TransRBuff(&vals[0]);
+	x = vals[0];
+	y = vals[2];//invert y and z!
+	z = vals[1];
+	//retrieve temperature
+	temp = spi_bma150_read_temp();
+	printk("MAAT bma150_work called, x=%d y=%d z=%d temp=%d\n",x,y,z,temp);	
+	//report update
+	input_report_abs(bma150_w->idev, ABS_X, x);
+	input_report_abs(bma150_w->idev, ABS_Y, y);
+	input_report_abs(bma150_w->idev, ABS_Z, z);
+	input_report_abs(bma150_w->idev, EVENT_TYPE_TEMPERATURE, temp);
+	input_sync(bma150_w->idev);
+	
+	//restart timer if not suspended (500ms)
+	if (!bma150_w->susp)
+		hrtimer_start(&bma150_w->timer,ktime_set(0, BMA_POLL_TIMER_MS*1000000),HRTIMER_MODE_REL);
+
+#ifdef CONFIG_ANDROID_POWER
+	android_unlock_suspend(&bma150_w->suspend_lock);
+#endif
+	mutex_unlock(&bma150_w->mWorkLock);
+}
+
 static int spi_gsensor_initial(void)
 {
 	int ret;
@@ -561,21 +660,58 @@ static int  spi_bma150_probe(struct platform_device *pdev)
 			"start initial, kvalue = 0x%x\n", __func__, gs_kvalue);
 
 	this_pdata = pdev->dev.platform_data;
-
 	this_pdata->gs_kvalue = gs_kvalue;
 
+	//r0bin: added for async poll
+	this_pdata->idev = input_allocate_device();
+	if (this_pdata->idev) {
+		this_pdata->idev->name = MODULE_NAME;
+		//idev->phys=kzalloc(12, GFP_KERNEL);
+		//snprintf((char*)idev->phys, 11, "i2c/0-%04x", _bma->micropklt_t->client->addr);
+		set_bit(EV_ABS, this_pdata->idev->evbit);
+		input_set_abs_params(this_pdata->idev, ABS_X, -2048, 2047, 0, 0);
+		input_set_abs_params(this_pdata->idev, ABS_Y, -2048, 2047, 0, 0);
+		input_set_abs_params(this_pdata->idev, ABS_Z, -2048, 2047, 0, 0);
+		input_set_abs_params(this_pdata->idev, EVENT_TYPE_TEMPERATURE, 0, 256, 0, 0);
+		//input_set_abs_params(this_pdata->idev, ABS_GAS, 0, 65535, 0, 0);
+		if (!input_register_device(this_pdata->idev)) {
+			printk( MODULE_NAME 
+					": Input device successfuly registered\n");
+		} else {
+			this_pdata->idev = 0;
+			printk(KERN_ERR MODULE_NAME 
+					": Failed to register input device\n");
+		}
+	}
+	
 /*
 	printk(KERN_DEBUG "%s: this_pdata->microp_new_cmd = %d\n",
 			__func__, this_pdata->microp_new_cmd);
 */
 	spi_gsensor_initial();
 
+	//dont forget to init mutex
+	mutex_init(&this_pdata->mWorkLock);
+	
+#ifdef CONFIG_ANDROID_POWER
+	this_pdata->suspend_lock.name = MODULE_NAME;
+	android_init_suspend_lock(&this_pdata->suspend_lock);
+	android_lock_suspend(&this_pdata->suspend_lock);
+#endif
+	//r0bin: added for async poll
+	INIT_DELAYED_WORK(&this_pdata->work, bma150_work);
+	hrtimer_init(&this_pdata->timer, CLOCK_MONOTONIC, HRTIMER_MODE_REL);
+	this_pdata->timer.function = bma150_poll_timer;
+	this_pdata->susp = 1;
 	return 0;
 }
 
 static int spi_bma150_remove(struct platform_device *pdev)
 {
 	mutex_destroy(&gsensor_set_mode_mutex);
+#ifdef CONFIG_ANDROID_POWER
+	android_uninit_suspend_lock(&(pdev->dev.platform_data->suspend_lock)->suspend_lock);
+#endif
 	return 0;
 }
 
@@ -583,7 +719,7 @@ static struct platform_driver spi_bma150_driver = {
 	.probe		= spi_bma150_probe,
 	.remove		= spi_bma150_remove,
 	.driver		= {
-		.name		= BMA150_G_SENSOR_NAME,
+		.name		= MODULE_NAME,
 		.owner		= THIS_MODULE,
 	},
 };
@@ -598,6 +734,7 @@ static void __exit spi_bma150_exit(void)
 {
 	platform_driver_unregister(&spi_bma150_driver);
 }
+
 
 module_init(spi_bma150_init);
 module_exit(spi_bma150_exit);
