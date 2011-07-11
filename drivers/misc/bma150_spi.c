@@ -595,23 +595,7 @@ static void bma150_work(struct work_struct *work)
 static int spi_gsensor_initial(void)
 {
 	int ret;
-/*	ret = spi_microp_enable(1);
-	if (ret < 0) {
-		printk(KERN_ERR "%s: spi_microp_enable fail\n", __func__);
-		return ret;
-	}*/
-/*	ret = spi_gsensor_read_version();
-	if (ret < 0) {
-		printk(KERN_ERR "%s: get version fail\n", __func__);
-		return ret;
-	}*/
 
-/*	ret = microp_gsensor_init_hw(client);
-	if (ret < 0) {
-		printk(KERN_ERR "%s: init g-sensor fail\n", __func__);
-		return ret;
-	}
-*/
 	ret = misc_register(&spi_bma_device);
 	if (ret < 0) {
 		printk(KERN_ERR "%s: init misc_register fail\n", __func__);
@@ -621,13 +605,18 @@ static int spi_gsensor_initial(void)
 	mutex_init(&gsensor_RW_mutex);
 	mutex_init(&gsensor_set_mode_mutex);
 
-
 	ret = spi_microp_enable(1);
 	if (ret) {
 		printk(KERN_ERR "%s: spi_microp_enable(1) fail!\n", __func__);
 		goto err_spi_enable;
 	}
 
+	//r0bin: fix g-sensor calibration at init
+	ret = spi_gsensor_init_hw();
+	if (ret) {
+		printk(KERN_ERR "%s: spi_gsensor_init_hw fail, continue anyway\n", __func__);
+	}
+	
 	ret = __spi_bma150_set_mode(BMA_MODE_SLEEP);
 	if (ret) {
 		printk(KERN_ERR "%s: set BMA_MODE_SLEEP fail!\n", __func__);
