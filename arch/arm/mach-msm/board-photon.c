@@ -23,8 +23,6 @@
 #include <linux/leds.h>
 #include <linux/switch.h>
 #include <linux/synaptics_i2c_rmi.h>
-#include <linux/atmel_qt602240.h>
-#include <linux/akm8973.h>
 #include <linux/bma150.h>
 #include <linux/capella_cm3602.h>
 #include <linux/sysdev.h>
@@ -251,9 +249,11 @@ static struct microp_led_config led_config[] = {
 		.type = LED_RGB,
 	},
 	{
-		.name   = "button-backlight",
-		.type = LED_GPO,
-		.mask_w = {0x00, 0x00, 0x08},
+		.name = "button-backlight",
+		.type = LED_PWM,
+		.led_pin = 1 << 5,
+		.init_value = 0x0,
+		.fade_time = 10,
 	},
 };
 
@@ -306,130 +306,13 @@ static struct microp_i2c_platform_data microp_data = {
 	.spi_devices = SPI_GSENSOR,
 };
 
-static struct synaptics_i2c_rmi_platform_data liberty_ts_t1007_data[] = {
-	{
-		.version = 0x0100,
-		.flags = SYNAPTICS_FLIP_Y | SYNAPTICS_SNAP_TO_INACTIVE_EDGE,
-		.inactive_left = -10 * 0x10000 / 3214,
-		.inactive_right = -10 * 0x10000 / 3214,
-		.inactive_top = -20 * 0x10000 / 5414,
-		.inactive_bottom = -20 * 0x10000 / 5414,
-		.snap_left_on = 10 * 0x10000 / 3214,
-		.snap_left_off = 20 * 0x10000 / 3214,
-		.snap_right_on = 10 * 0x10000 / 3214,
-		.snap_right_off = 20 * 0x10000 / 3214,
-		.snap_top_on = 20 * 0x10000 / 5414,
-		.snap_top_off = 30 * 0x10000 / 5414,
-		.snap_bottom_on = 20 * 0x10000 / 5414,
-		.snap_bottom_off = 30 * 0x10000 / 5414,
-	}
-};
-
 static struct synaptics_i2c_rmi_platform_data liberty_ts_t1021_data[] = {
 	{
 		.version = 0x0100,
 		.inactive_left = -1 * 0x10000 / 320,
 		.inactive_right = -1 * 0x10000 / 320,
 		.inactive_top = -1 * 0x10000 / 480,
-		.inactive_bottom = -50 * 0x10000 / 480,
-	}
-};
-
-static int liberty_ts_atmel_power(int on)
-{
-	printk(KERN_INFO "%s():\n", __func__);
-	if (on) {
-		gpio_set_value(LIBERTY_TP_5V_EN, 1);
-		msleep(2);
-		gpio_set_value(LIBERTY_GPIO_TP_RST, 1);
-	} else {
-		gpio_set_value(LIBERTY_TP_5V_EN, 0);
-		msleep(2);
-	}
-	return 0;
-}
-
-struct atmel_i2c_platform_data liberty_ts_atmel_data[] = {
-	{
-		.version = 0x016,
-		.abs_x_min = 0,
-		.abs_x_max = 1023,
-		.abs_y_min = 0,
-		.abs_y_max = 915,
-		.abs_pressure_min = 0,
-		.abs_pressure_max = 255,
-		.abs_width_min = 0,
-		.abs_width_max = 20,
-		.gpio_irq = LIBERTY_GPIO_TP_ATT_N,
-		.power = liberty_ts_atmel_power,
-		.config_T6 = {0, 0, 0, 0, 0, 0},
-		.config_T7 = {50, 15, 25},
-		.config_T8 = {7, 0, 10, 10, 0, 0, 10, 15},
-		.config_T9 = {139, 0, 0, 16, 10, 0, 16, 40, 3, 1, 10, 10, 5, 15, 3, 10, 20, 0, 0, 0, 0, 0, 254, 2, 42, 36, 154, 54, 142, 89, 40},
-		.config_T15 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-		.config_T19 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-		.config_T20 = {7, 0, 0, 0, 0, 0, 0, 35, 20, 4, 15, 0},
-		.config_T22 = {15, 0, 0, 0, 0, 0, 0, 0, 16, 0, 1, 0, 7, 18, 255, 255, 0},
-		.config_T23 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-		.config_T24 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-		.config_T25 = {3, 0, 200, 50, 64, 31, 0, 0, 0, 0, 0, 0, 0, 0},
-		.config_T27 = {0, 0, 0, 0, 0, 0, 0},
-		.config_T28 = {0, 0, 0, 4, 8, 60},
-		.object_crc = {0xDC, 0x1F, 0x50},
-		.cable_config = {30, 30, 8, 16},
-	},
-	{
-		.version = 0x0015,
-		.abs_x_min = 0,
-		.abs_x_max = 1023,
-		.abs_y_min = 0,
-		.abs_y_max = 915,
-		.abs_pressure_min = 0,
-		.abs_pressure_max = 255,
-		.abs_width_min = 0,
-		.abs_width_max = 20,
-		.gpio_irq = LIBERTY_GPIO_TP_ATT_N,
-		.power = liberty_ts_atmel_power,
-		.config_T6 = {0, 0, 0, 0, 0, 0},
-		.config_T7 = {50, 15, 25},
-		.config_T8 = {8, 0, 20, 10, 0, 0, 5, 25},
-		.config_T9 = {139, 0, 0, 16, 10, 0, 16, 35, 2, 1, 0, 5, 2, 14, 2, 10, 20, 0, 0, 0, 0, 0, 1, 1, 20, 20, 153, 54, 153, 89},
-		.config_T15 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-		.config_T19 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-		.config_T20 = {19, 0, 0, 5, 5, 0, 0, 35, 20, 4, 15, 0},
-		.config_T22 = {13, 0, 0, 25, 0, -25, 255, 4, 20, 0, 1, 10, 15, 20, 25, 30, 4},
-		.config_T23 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-		.config_T24 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-		.config_T25 = {3, 0, 200, 50, 64, 31, 0, 0, 0, 0, 0, 0, 0, 0},
-		.config_T27 = {0, 0, 0, 0, 0, 0, 0},
-		.config_T28 = {0, 0, 0, 4, 8, 60},
-		.object_crc = {0x62, 0xAE, 0x09},
-	},
-	{
-		.version = 0x0014,
-		.abs_x_min = 13,
-		.abs_x_max = 1009,
-		.abs_y_min = 10,
-		.abs_y_max = 930,
-		.abs_pressure_min = 0,
-		.abs_pressure_max = 255,
-		.abs_width_min = 0,
-		.abs_width_max = 20,
-		.gpio_irq = LIBERTY_GPIO_TP_ATT_N,
-		.power = liberty_ts_atmel_power,
-		.config_T6 = {0, 0, 0, 0, 0, 0},
-		.config_T7 = {32, 16, 50},
-		.config_T8 = {8, 0, 20, 20, 0, 0, 10, 15},
-		.config_T9 = {131, 0, 0, 16, 10, 0, 48, 35, 2, 1, 0, 1, 1, 0, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-		.config_T15 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-		.config_T19 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-		.config_T20 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-		.config_T22 = {5, 0, 0, 25, 0, -25, 255, 4, 50, 0, 1, 10, 15, 20, 10, 10, 0},
-		.config_T23 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-		.config_T24 = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-		.config_T25 = {3, 0, 224, 46, 88, 27, 0, 0, 0, 0, 0, 0, 0, 0},
-		.config_T27 = {0, 0, 0, 0, 0, 0, 0},
-		.config_T28 = {0, 0, 0, 4, 8},
+		.inactive_bottom = -72 * 0x10000 / 480,
 	}
 };
 
@@ -507,19 +390,9 @@ static struct platform_device android_usb_device = {
 
 static struct i2c_board_info i2c_devices[] = {
 	{
-		I2C_BOARD_INFO(SYNAPTICS_T1007_NAME, 0x20),
-		.platform_data = &liberty_ts_t1007_data,
-		.irq = LIBERTY_GPIO_TO_INT(LIBERTY_GPIO_TP_ATT_N)
-	},
-	{
 		I2C_BOARD_INFO(SYNAPTICS_T1021_NAME, 0x21),
 		.platform_data = &liberty_ts_t1021_data,
 		.irq = LIBERTY_GPIO_TO_INT(LIBERTY_GPIO_TP_ATT_N)
-	},
-	{
-		I2C_BOARD_INFO(ATMEL_QT602240_NAME, 0x94 >> 1),
-		.platform_data = &liberty_ts_atmel_data,
-		.irq = MSM_GPIO_TO_INT(LIBERTY_GPIO_TP_ATT_N)
 	},
 	{
 		I2C_BOARD_INFO(MICROP_I2C_NAME, 0xCC >> 1),
@@ -990,26 +863,14 @@ static struct msm_serial_hs_platform_data msm_uart_dm1_pdata = {
 static ssize_t liberty_virtual_keys_show(struct kobject *kobj,
 			       struct kobj_attribute *attr, char *buf)
 {
-	if (system_rev > 1) {
-			/* center: x: call: 32, home: 96, menu: 160, back: 224, endcall: 288, y: 580 */
+		/* center: x: call: 32, home: 96, menu: 160, back: 224, endcall: 288, y: 550 */
 		return sprintf(buf,
-			__stringify(EV_KEY) ":" __stringify(KEY_PHONE)	     ":32:510:50:55"
-			":" __stringify(EV_KEY) ":" __stringify(KEY_HOME)	   ":96:510:50:55"
-			":" __stringify(EV_KEY) ":" __stringify(KEY_MENU)    ":160:510:50:55"
-			":" __stringify(EV_KEY) ":" __stringify(KEY_BACK)    ":224:510:50:55"
-			":" __stringify(EV_KEY) ":" __stringify(KEY_END)     ":288:510:50:55"
+			__stringify(EV_KEY) ":" __stringify(KEY_PHONE)       ":32:550:64:55"
+			":" __stringify(EV_KEY) ":" __stringify(KEY_HOME)    ":96:550:64:55"
+			":" __stringify(EV_KEY) ":" __stringify(KEY_MENU)    ":160:550:64:55"
+			":" __stringify(EV_KEY) ":" __stringify(KEY_BACK)    ":224:550:64:55"
+			":" __stringify(EV_KEY) ":" __stringify(KEY_SEARCH)     ":288:550:64:55"
 			"\n");
-	} else {
-
-		/* center: x: call: 32, home: 96, menu: 160, back: 224, endcall: 288, y: 580 */
-		return sprintf(buf,
-			__stringify(EV_KEY) ":" __stringify(KEY_PHONE)       ":32:510:64:55"
-			":" __stringify(EV_KEY) ":" __stringify(KEY_HOME)    ":96:510:64:55"
-			":" __stringify(EV_KEY) ":" __stringify(KEY_MENU)    ":160:510:64:55"
-			":" __stringify(EV_KEY) ":" __stringify(KEY_BACK)    ":224:510:64:55"
-			":" __stringify(EV_KEY) ":" __stringify(KEY_END)     ":288:510:64:55"
-			"\n");
-	}
 }
 
 static struct kobj_attribute liberty_synaptics_virtual_keys_attr = {
@@ -1020,17 +881,8 @@ static struct kobj_attribute liberty_synaptics_virtual_keys_attr = {
 	.show = &liberty_virtual_keys_show,
 };
 
-static struct kobj_attribute liberty_atmel_virtual_keys_attr = {
-	.attr = {
-		.name = "virtualkeys.atmel-touchscreen",
-		.mode = S_IRUGO,
-	},
-	.show = &liberty_virtual_keys_show,
-};
-
 static struct attribute *liberty_properties_attrs[] = {
 	&liberty_synaptics_virtual_keys_attr.attr,
-	&liberty_atmel_virtual_keys_attr.attr,
 	NULL
 };
 
