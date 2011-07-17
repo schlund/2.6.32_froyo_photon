@@ -21,6 +21,7 @@
 #include <linux/gpio.h>
 #include <linux/spinlock.h>
 #include <linux/earlysuspend.h>
+#include <linux/irq.h>
 #include <mach/msm_iomap.h>
 #include <mach/system.h>
 
@@ -236,12 +237,41 @@ static struct early_suspend early_suspend = {
 	.level = 48,
 };
 
+/* -------------------------------------------------------------------------- */
+/* DEX VBUS callback (imported from HTC Leo) */
+
+//implemeted in htc_battery_smem.c
+void notify_vbus_change_intr(void);
+#define PC_NOTIFY       0x28
+
+static irqreturn_t dex_cb_interrupt(int irq, void *dev_id)
+{
+    uint32_t nt;
+	unsigned base = (unsigned)(MSM_SHARED_RAM_BASE + 0xfc100);
+	
+    nt = readl(base + PC_NOTIFY);
+    writeb(0, base + PC_NOTIFY); // clear state
+
+    if (nt & 2) // VBUS state changed
+        notify_vbus_change_intr();
+    return IRQ_HANDLED;
+}
+static struct irqaction dex_callback_irq =
+{
+    .name       = "dex_cb",
+    .flags      = IRQF_TRIGGER_RISING, //IRQF_DISABLED,
+    .handler    = dex_cb_interrupt
+};
+/* -------------------------------------------------------------------------- */
+
 // Initialize PCOM registers
 int msm_proc_comm_wince_init()
 {
 	unsigned base = (unsigned)(MSM_SHARED_RAM_BASE + 0xfc100);
 	unsigned long flags;
 
+	setup_irq(INT_A9_M2A_4, &dex_callback_irq);
+	
 	spin_lock_irqsave(&proc_comm_lock, flags);
 
 	writel(0, base + PC_DATA);

@@ -1,5 +1,6 @@
 /* arch/arm/mach-msm/htc_battery_smem.c
  * Based on: htc_battery.c by HTC and Google
+ * also based on Xandroid algorithm and HTCLeo (thank you guys!)
  *
  * updated by r0bin and photon community (2011)
  * Copyright (C) 2008 HTC Corporation.
@@ -39,7 +40,8 @@
 
 static struct wake_lock vbus_wake_lock;
 static int bat_suspended = 0;
-static int batt_vref = 0, batt_vref_half = 0;
+static int batt_vref = 1238;
+static int batt_vref_half = 615;
 static int g_usb_online;
 
 enum {
@@ -61,8 +63,8 @@ static struct sBattery_Parameters* batt_param = (struct sBattery_Parameters*)&sB
 
 #define MODULE_NAME "htc_battery"
 
-#define TRACE_BATT 1
-//#undef TRACE_BATT
+//#define TRACE_BATT 1
+#undef TRACE_BATT
 
 #if TRACE_BATT
  #define BATT(x...) printk(KERN_INFO "[BATT] " x)
@@ -93,34 +95,6 @@ static struct sBattery_Parameters* batt_param = (struct sBattery_Parameters*)&sB
  #define BATTLOG(x...) do {} while (0)
 #endif
 
-typedef enum {
-	DISABLE = 0,
-	ENABLE_SLOW_CHG,
-	ENABLE_FAST_CHG
-} batt_ctl_t;
-
-/* This order is the same as htc_power_supplies[]
- * And it's also the same as htc_cable_status_update()
- */
-typedef enum {
-	CHARGER_BATTERY = 0,
-	CHARGER_USB,
-	CHARGER_AC
-} charger_type_t;
-
-struct battery_info_reply {
-	u32 batt_id;		/* Battery ID from ADC */
-	u32 batt_vol;		/* Battery voltage from ADC */
-	u32 batt_temp;		/* Battery Temperature (C)corrected value from formula and ADC */
-	s32 batt_current;	/* Battery charge current from ADC */
-	s32 batt_discharge;	/* Battery discharge current from ADC */
-	u32 level;		/* formula */
-	u32 charging_source;	/* 0: no cable, 1:usb, 2:AC */
-	u32 charging_enabled;	/* 0: Disable, 1: Enable */
-	u32 full_bat;		/* Full capacity of battery (mAh) */
-	u32 batt_tempRAW;	/* Battery Temperature (C) from formula and ADC */
-};
-
 struct htc_battery_info {
 	int present;
 	unsigned long update_time;
@@ -137,7 +111,7 @@ static struct battery_info_reply old_batt_info;
 
 static unsigned int cache_time = 1000;
 
-static int htc_battery_initial = 0;
+static int is_battery_initialized = 0;
 static bool not_yet_started = true;
 static unsigned int time_stamp = 0;
 
@@ -214,9 +188,6 @@ static int init_battery_settings( struct battery_info_reply *buffer ) {
 	if ( buffer == NULL )
 		return -EINVAL;
 
-	if ( htc_get_batt_info( buffer ) < 0 )
-		return -EINVAL;
-
 	mutex_lock( &htc_batt_info.lock );
 
 	batt_vref = GET_ADC_VREF;
@@ -240,6 +211,10 @@ static int init_battery_settings( struct battery_info_reply *buffer ) {
 	}
 
 	mutex_unlock(&htc_batt_info.lock);
+	
+	if ( htc_get_batt_info( buffer ) < 0 )
+		return -EINVAL;
+
 	if(debug_mask&DEBUG_LOG)
 		BATT("init_battery_settings: VREF=%d; 0.5-VREF=%d; ADC_A=%d; ADC_B=%d; htc_adc_range=%d; batt_id=%d; batt_vendor=%d; full_bat=%d\n", \
 		batt_vref, batt_vref_half, htc_adc_a, htc_adc_b, htc_adc_range, buffer->batt_id, batt_vendor, buffer->full_bat);
@@ -327,6 +302,43 @@ static struct power_supply htc_power_supplies[] = {
 	},
 };
 
+/* -------------------------------------------------------------------------- */
+/* Workqueue for vbus notifier */
+int htc_cable_status_update(const char *sfrom);
+static struct workqueue_struct *g_vbus_notifier_work_queue;
+static void vbusnotifier_work(struct work_struct *work)
+{
+	//as soon as we got an event from vbus, update cable status
+	htc_cable_status_update(__func__);
+}
+static DECLARE_WORK(g_vbus_notifier_work, vbusnotifier_work);
+
+/* -------------------------------------------------------------------------- */
+/* HTCLeo Dex Functions. */
+static int get_vbus_state(void)
+{
+	if (readl(MSM_SHARED_RAM_BASE + 0xfc00c))
+		return 1;
+	else
+		return 0;
+}
+
+void notify_cable_status(int status)
+{
+	printk("%s, VBUS IRQ triggered, VBUS=%d)\n", __func__,status);
+	//activate VBUS for usb driver
+	msm_hsusb_set_vbus_state(status);
+	//queue work to avoid blocking irq
+	queue_work(g_vbus_notifier_work_queue, &g_vbus_notifier_work);	
+}
+
+// called from DEX intrrupt
+void notify_vbus_change_intr(void)
+{
+	if (!is_battery_initialized)
+		return;
+	notify_cable_status(get_vbus_state());
+}
 /* -------------------------------------------------------------------------- */
 
 #if defined(CONFIG_DEBUG_FS)
@@ -439,7 +451,7 @@ int htc_battery_set_charging(batt_ctl_t ctl)
 	if ((rc = battery_charging_ctrl(ctl)) < 0)
 		goto result;
 
-	if (!htc_battery_initial) {
+	if (!is_battery_initialized) {
 		htc_batt_info.rep.charging_enabled = ctl & 0x3;
 	} else {
 		mutex_lock(&htc_batt_info.lock);
@@ -450,108 +462,77 @@ result:
 	return rc;
 }
 
-int htc_battery_status_update(u32 curr_level)
-{
-	int notify;
-#ifdef FAST_USB_CHARGE
-	unsigned charge = 0;
-#endif
-	if (!htc_battery_initial)
-		return 0;
 
-	mutex_lock(&htc_batt_info.lock);
-	notify = (htc_batt_info.rep.level != curr_level);
-	htc_batt_info.rep.level = curr_level;
-#ifdef FAST_USB_CHARGE
-	/* If battery is above 95%, switch to slow charging.
-	 * If battery is below 90%, switch to fast charging.
-	 */
-	if (curr_level > 95 && htc_batt_info.rep.charging_enabled == ENABLE_FAST_CHG)
-		charge = ENABLE_SLOW_CHG;
-	else if (curr_level < 90 && htc_batt_info.rep.charging_enabled == ENABLE_SLOW_CHG)
-		charge = ENABLE_FAST_CHG;
-#endif
-	mutex_unlock(&htc_batt_info.lock);
+//JH //this is for packet filter (notify port list while USB in/out)
+int update_port_list_charging_state(int enable);
 
-	if (notify)
-		power_supply_changed(&htc_power_supplies[CHARGER_BATTERY]);
-#ifdef FAST_USB_CHARGE
-	if (charge)
-		htc_battery_set_charging(charge);
-#endif
-	return 0;
-}
-
-static bool on_battery;
-int htc_cable_status_update(int status)
+int htc_cable_status_update(const char *sfrom)
 {
 	int rc = 0;
 	unsigned source;
+	int status;
 	unsigned last_source;
 	unsigned vbus_status;
-#ifdef FAST_USB_CHARGE
-	unsigned charger;
-#endif
-	vbus_status = readl(MSM_SHARED_RAM_BASE+0xfc00c);
 
-	if (!htc_battery_initial)
+	vbus_status = get_vbus_state();
+
+	//printk("%s called from %s\n",__func__,sfrom);
+	
+	if (!is_battery_initialized)
 		return 0;
+	
+	if (vbus_status && (!g_usb_online) && (htc_batt_info.rep.charging_source !=CHARGER_AC))
+	{
+		//usually, it takes less than 1sec for usb gadget to detect usb cable
+		//we give time to usb notifier to modify g_usb_online status
+		printk("%s: detected USB cable insertion (AC charger). Wait 1sec to see if it's USB charger or AC charger\n",__func__);
+		msleep(1000);
+	}
 	
 	mutex_lock(&htc_batt_info.lock);
 	if(vbus_status && g_usb_online) {
-		status=CHARGER_USB;	/* vbus present, usb connection online (perhaps breaks kovsky ?) */
-		on_battery = false;
-#ifdef FAST_USB_CHARGE
-		charger = ENABLE_FAST_CHG;
-#endif
+		status=CHARGER_USB;	/* vbus present, usb connection online = USB CHARGER */
+		printk("%s vbus present, usb connection=%d => USB CHARGER\n",__func__,g_usb_online);
 	} else if (vbus_status && !g_usb_online) {
-		status=CHARGER_AC;	/* vbus present, no usb */
-		on_battery = false;
-#ifdef FAST_USB_CHARGE
-		charger = ENABLE_FAST_CHG;
-#endif
+		status=CHARGER_AC;	/* vbus present, no usb = AC CHARGER */
+		printk("%s vbus present, usb connection=%d =>AC CHARGER\n",__func__,g_usb_online);
 	} else {
+		printk("%s no vbus, no usb, usb connection=%d => ON BATTERY\n",__func__,g_usb_online);
 		g_usb_online = 0;
 		status=CHARGER_BATTERY;
-		on_battery = true;
-#ifdef FAST_USB_CHARGE
-		charger = DISABLE;
-#endif
 	}
-#ifdef ROBINDEBUG
-	printk("%s, vbus=%d,usbonline=%d status=%d\n",__func__,vbus_status,g_usb_online,status);
-#endif
 	last_source = htc_batt_info.rep.charging_source;
 
 	switch(status) {
 	case CHARGER_BATTERY:
-		if(debug_mask&DEBUG_CABLE)
-			BATT("cable NOT PRESENT\n");
 		htc_batt_info.rep.charging_source = CHARGER_BATTERY;
+		htc_batt_info.rep.charging_enabled = 0;
 		break;
 	case CHARGER_USB:
-		if(debug_mask&DEBUG_CABLE)
-			BATT("cable USB\n");
 		htc_batt_info.rep.charging_source = CHARGER_USB;
+		htc_batt_info.rep.charging_enabled = 1;
 		break;
 	case CHARGER_AC:
-		if(debug_mask&DEBUG_CABLE)
-			BATT("cable AC\n");
 		htc_batt_info.rep.charging_source = CHARGER_AC;
+		htc_batt_info.rep.charging_enabled = 1;
 		break;
 	default:
 		BATT_ERR("%s - Not supported cable status received!\n", __FUNCTION__);
 		rc = -EINVAL;
 	}
 	source = htc_batt_info.rep.charging_source;
+	
+	//maf reset if we change source
+	if(source != last_source)
+	{
+		maf_clear();
+		//JH //this is for packet filter (notify port list while USB in/out)
+		update_port_list_charging_state(!(htc_batt_info.rep.charging_source == CHARGER_BATTERY));
+	}
+	
 	mutex_unlock(&htc_batt_info.lock);
-#ifdef FAST_USB_CHARGE
-	if (charger == ENABLE_FAST_CHG && htc_batt_info.rep.level > 95)
-		charger = ENABLE_SLOW_CHG;
-	htc_battery_set_charging(charger);
-#else
-        htc_battery_set_charging(status);
-#endif
+	
+    htc_battery_set_charging(status);
 	msm_hsusb_set_vbus_state((source==CHARGER_USB) || (source==CHARGER_AC));
 
 	if (  source == CHARGER_USB || source==CHARGER_AC ) {
@@ -560,7 +541,7 @@ int htc_cable_status_update(int status)
 		/* give userspace some time to see the uevent and update
 		 * LED state or whatnot...
 		 */
-		wake_lock_timeout(&vbus_wake_lock, HZ / 2);
+		wake_lock_timeout(&vbus_wake_lock, HZ);
 	} else {
 		wake_unlock(&vbus_wake_lock);
 	}
@@ -576,28 +557,6 @@ int htc_cable_status_update(int status)
 	return rc;
 }
 
-/* A9 reports USB charging when helf AC cable in and China AC charger. */
-/* Work arround: notify userspace AC charging first,
-and notify USB charging again when receiving usb connected notification from usb driver. */
-void notify_usb_connected(int online)
-{
-	printk(KERN_DEBUG "%s: online=%d\n", __func__, online);
-//	printk("%s: online=%d\n", __func__, online);
-
-	g_usb_online = online;
-	if (not_yet_started) return;
-	
-	mutex_lock(&htc_batt_info.lock);
-	if (online && htc_batt_info.rep.charging_source == CHARGER_AC) {
-		mutex_unlock(&htc_batt_info.lock);
-		htc_cable_status_update(CHARGER_USB);
-		mutex_lock(&htc_batt_info.lock);
-	} else if (online) {
-		//BATT
-		printk("warning: usb connected but charging source=%d\n", htc_batt_info.rep.charging_source);
-	}
-	mutex_unlock(&htc_batt_info.lock);
-}
 
 struct htc_batt_info_u16 {
 	volatile u16 batt_id;
@@ -627,7 +586,7 @@ static int htc_battery_temperature_lut( int av_index )
 #define CHARGE_STATUS_AGESIZE 6
 static int charge_status_age[CHARGE_STATUS_AGESIZE];
 #endif
-static int old_level = 100;
+static int old_level = -1;
 static int charge_curr_ref = 0;
 static long current_loaded_mAs = 0;
 static int max_curr = 0;
@@ -669,9 +628,8 @@ static void htc_battery_level_compute( struct battery_info_reply *buffer )
 		}
 	}
 #endif
-	BATTLOG("htc_battery_level_compute called\n");
 	//Algorithm for discharge
-	if ( on_battery )
+	if (  !buffer->charging_enabled  )
 	{
 		charge_curr_ref = 0;
 		//discharge resistor correction
@@ -702,9 +660,6 @@ static void htc_battery_level_compute( struct battery_info_reply *buffer )
 		} else {
 			result = 0;
 		}
-#ifdef ROBINDEBUG
-		printk("%s: discharging, raw level=%d\n",__func__,result);
-#endif
 	}
 	//Algorithm for charge
 	else
@@ -712,13 +667,12 @@ static void htc_battery_level_compute( struct battery_info_reply *buffer )
 		//first time: take last percentage
 		if(charge_curr_ref == 0)
 		{
+			if(old_level<0)
+				old_level = 50;
 			charge_curr_ref = (old_level*(BATT_CAPACITY_PHOTON-100))/100;
 			current_loaded_mAs=0;
 			max_curr = 0;
 			stop_charge_counter = 0;
-#ifdef ROBINDEBUG
-			printk("%s: first time charging, old_level=%d, curr_ref=%d\n",__func__,old_level,charge_curr_ref);
-#endif
 		}else{
 			unsigned int udelta_msec;
 			mcurr_jiffies = jiffies;
@@ -735,9 +689,7 @@ static void htc_battery_level_compute( struct battery_info_reply *buffer )
 						__func__,udelta_msec,delta_msec,old_current,delta_mAs);
 #endif
 			}else{
-#ifdef ROBINDEBUG
 				printk("%s udelta_msec=%u: jiffies corruption\n",__func__,udelta_msec);
-#endif
 			}
 		}
 		old_current = ccurrent;
@@ -761,9 +713,7 @@ static void htc_battery_level_compute( struct battery_info_reply *buffer )
 		if(stop_charge_counter >= 10)
 		{
 			result = 100;
-#ifdef ROBINDEBUG
 			printk("%s: charging, emergency stop, batt is full!\n",__func__);
-#endif
 		}
 	}
 
@@ -773,9 +723,9 @@ static void htc_battery_level_compute( struct battery_info_reply *buffer )
 	} else if (result < 0) {
 		buffer->level = 0;
 	//avoid variations more than 2% per sample
-	} else if ( ( result > (old_level + 2) ) && (result < 98) ) {
+	} else if ( ( result > (old_level + 2) ) && (result < 98) && (old_level>0) ) {
 		buffer->level = old_level + 2;
-	} else if ( result < (old_level - 2) ) {
+	} else if ( result < (old_level - 2) && (old_level>0) ) {
 		buffer->level = old_level - 2;
 	} else {
 		buffer->level = result;
@@ -795,8 +745,8 @@ static void fix_batt_values(struct battery_info_reply *buffer) {
 		buffer->batt_current = 500;                                        
 	if ( buffer->batt_current < -500 )
 		buffer->batt_current = -500;                                                     
-	if ( buffer->batt_tempRAW > 500 )
-		buffer->batt_temp = 500;                                        
+	if ( buffer->batt_tempRAW > 637 )
+		buffer->batt_temp = 637;                                        
 	else if ( buffer->batt_tempRAW < 0 )
 		buffer->batt_temp = 0;
 	else
@@ -805,12 +755,13 @@ static void fix_batt_values(struct battery_info_reply *buffer) {
 
 void printBattBuff(struct battery_info_reply *buffer,char *txt)
 {
-#ifdef ROBINDEBUG
+#if 0
 	printk( "r0bin %s: batt_id=%d;volt=%d;tempRaw=%dC;temp=%dC;current=%d;discharge=%d;LEVEL=%d;charging src=%d;charging?%d;adc_range=%d\n",
 			txt,buffer->batt_id,buffer->batt_vol,buffer->batt_tempRAW,buffer->batt_temp,
 			buffer->batt_current,buffer->batt_discharge,buffer->level,buffer->charging_source,buffer->charging_enabled,htc_adc_range);
-#endif			
-		}
+#endif
+}
+
 
 /* Photon battery data corrections */
 /* r0bin: algorithms by pwel and munjeni */
@@ -849,7 +800,7 @@ static int htc_get_batt_smem_info(struct battery_info_reply *buffer)
 	buffer->batt_tempRAW = batt_16->batt_temp;
 	buffer->batt_id = batt_16->batt_id;
 	buffer->batt_discharge = batt_16->batt_discharge;
-	printBattBuff(buffer,"RAW VALUES");
+	//printBattBuff(buffer,"RAW VALUES");
 	
 	return 0;
 }
@@ -899,14 +850,15 @@ static int htc_get_batt_smem_info_5times(struct battery_info_reply *buffer)
 	current_sum = current_sum - current_lowest_val - current_highest_val;
 	buffer->batt_vol = volt_sum / 3;
 	buffer->batt_current = current_sum / 3;
-#ifdef ROBINDEBUG
-	printk("%s, final vals: volt=%d curr=%d\n",__func__,buffer->batt_vol,buffer->batt_current);
-#endif
+	//printk("%s, final vals: volt=%d curr=%d\n",__func__,buffer->batt_vol,buffer->batt_current);
+
+	printBattBuff(buffer,"RAW VALUES(*5)");
 	return 0;
 }
 
-//usage: backup batteryinfo data
-void memcpyBattInfo(struct battery_info_reply *source, struct battery_info_reply *dest)
+
+/* usage: backup batteryinfo data */
+void memcpyBattInfo(struct battery_info_reply *dest, struct battery_info_reply *source)
 {
 	dest->batt_id = source->batt_id;
 	dest->batt_vol = source->batt_vol;
@@ -920,39 +872,35 @@ void memcpyBattInfo(struct battery_info_reply *source, struct battery_info_reply
 	dest->batt_tempRAW = source->batt_tempRAW;
 }
 
-static int htc_get_batt_info(struct battery_info_reply *buffer)
+/* this is the main function that computes battery percentage */
+static int htc_get_batt_info(struct battery_info_reply *buffer_answer)
 {
-    int last_source, new_source;
 	unsigned int time_now;
+	struct battery_info_reply buffer;
 	
 	// sanity checks
-	if ( buffer == NULL )
+	if ( buffer_answer == NULL )
 		return -EINVAL;
 	if ( !htc_batt_info.resources || !htc_batt_info.resources->smem_offset ) {
 		BATT_ERR("smem_offset not set\n" );
 		return -EINVAL;
 	}
-    last_source = htc_batt_info.rep.charging_source;
-	BATTLOG("htc_get_batt_info called\n");
 
 	//don't stress our driver! minimum interval = 1sec
 	time_now = jiffies_to_msecs(jiffies);
-#ifdef ROBINDEBUG
-	printk("%s: diff=%u ms, time_now=%u ms, time_stamp=%u ms, jiffies=%lu\n",__func__,(time_now - time_stamp),time_now, time_stamp,jiffies);
-#endif
+	//printk("%s: diff=%u ms, time_now=%u ms, time_stamp=%u ms, jiffies=%lu\n",__func__,(time_now - time_stamp),time_now, time_stamp,jiffies);
+
 	if(time_stamp && ((time_now - time_stamp)<1000))
 	{
 		//if yes, no need to compute again: just copy previous computed values and exit!
-		memcpyBattInfo(&old_batt_info,buffer);
-#ifdef ROBINDEBUG
-		printk("%s: don't stress DEX, time diff=%u\n",__func__,(time_now - time_stamp));
-#endif
+		memcpyBattInfo(buffer_answer,&old_batt_info);
+		printk("%s: don't stress DEX, time diff only %u ms\n",__func__,(time_now - time_stamp));
 		return 0;
 	}
 
 	//read raw SMEM values 
 	//htc_get_batt_smem_info(buffer);
-	htc_get_batt_smem_info_5times(buffer);
+	htc_get_batt_smem_info_5times(&buffer);
 
 	time_stamp = jiffies_to_msecs(jiffies);
 /*
@@ -963,45 +911,56 @@ static int htc_get_batt_info(struct battery_info_reply *buffer)
 		(buffer->batt_discharge == old_batt_info.batt_discharge) &&
 		(buffer->batt_id == old_batt_info.batt_id)){
 		//if yes, no need to compute again: just copy previous computed values and exit!
-		memcpyBattInfo(&old_batt_info,buffer);
+		memcpyBattInfo(buffer,&old_batt_info);
 		printk("%s: smem values identical, no need to compute again, level=%d\n",__func__,buffer->level);
 		return 0;
 	}
 */
 	//if not, START computing!
 	//1st, calculate the avarage raw voltage, in order to avoid strong voltage variationst, 
-	maf_add_value( buffer->batt_vol );
-	buffer->batt_vol = maf_get_avarage();
+	maf_add_value( buffer.batt_vol );
+	buffer.batt_vol = maf_get_avarage();
 	
 	//check if charger is enabled
 	if (gpio_get_value(htc_batt_info.resources->gpio_charger_enable) == 0) {
-		buffer->charging_enabled = 1;
-		buffer->charging_source = CHARGER_USB;
+		buffer.charging_enabled = 1;
+		if(gpio_get_value(htc_batt_info.resources->gpio_charger_fast_dis) == 0)
+		{
+			buffer.charging_source = CHARGER_AC;
+		}else{
+			buffer.charging_source = CHARGER_USB;
+		}
 	} else {
-		buffer->charging_enabled = 0;
-		buffer->charging_source = CHARGER_BATTERY;
+		buffer.charging_enabled = 0;
+		buffer.charging_source = CHARGER_BATTERY;
 	}
 
-	if(debug_mask&DEBUG_LOG)
-		BATT("CHARGER_enabled=%d; CHARGER_source=%d\n", buffer->charging_enabled, buffer->charging_source);
-	/* should it be done before correction */
-	new_source = buffer->charging_source;
-	buffer->charging_source = last_source;
+	/* update cable status */
 	mutex_unlock(&htc_batt_info.lock);
-	htc_cable_status_update(new_source);
+	htc_cable_status_update(__func__);
 	mutex_lock(&htc_batt_info.lock);
+	//should never happens
+	if(buffer.charging_source != htc_batt_info.rep.charging_source)
+	{
+		printk("%s: cable status really needed an update: gpio detected source=%d, cable detected source=%d\n",__func__,buffer.charging_source, htc_batt_info.rep.charging_source);	
+		buffer.charging_source = htc_batt_info.rep.charging_source;
+		buffer.charging_enabled = htc_batt_info.rep.charging_enabled;
+	}
 
 	/* get real volt, temp and current values */
-	htc_photon_batt_corr( buffer );
-	printBattBuff(buffer,"DECODED VALUES");
+	htc_photon_batt_corr( &buffer );
+	printBattBuff( &buffer,"DECODED VALUES");
 	/* fix values in case they are out of bounds */
-	fix_batt_values(buffer);
+	fix_batt_values( &buffer);
+	printBattBuff( &buffer,"FIX VALUES");
 	/* compute battery level based on battery values */
-	htc_battery_level_compute( buffer );
-	printBattBuff(buffer,"COMPUTATION FINISHED");
+	htc_battery_level_compute( &buffer );
+	printBattBuff( &buffer,"COMPUTATION FINISHED");
 	
 	/* backup values for next time */
-	memcpyBattInfo(buffer, &old_batt_info);
+	memcpyBattInfo( &old_batt_info, &buffer);
+	/* return computed values to caller */
+	memcpyBattInfo( buffer_answer, &buffer);
 	
 	mutex_unlock(&htc_batt_info.lock);
 	return 0;
@@ -1072,6 +1031,11 @@ static int htc_battery_get_property(struct power_supply *psy,
 		break;
 	case POWER_SUPPLY_PROP_HEALTH:
 		val->intval = POWER_SUPPLY_HEALTH_GOOD;
+		if (htc_batt_info.rep.batt_temp >= 500 ||  htc_batt_info.rep.batt_temp <= 0)
+		{
+			val->intval =  POWER_SUPPLY_HEALTH_OVERHEAT;
+			printk("%s, Warning: power supply overheating: %d°C\n",__func__,htc_batt_info.rep.batt_temp);
+		}
 		break;
 	case POWER_SUPPLY_PROP_PRESENT:
 		val->intval = htc_batt_info.present;
@@ -1089,13 +1053,6 @@ static int htc_battery_get_property(struct power_supply *psy,
 	}
 
 	return 0;
-}
-
-void htc_battery_external_power_changed(struct power_supply *psy) {
-	if(debug_mask&DEBUG_LOG)
-		BATT("external power changed\n");
-	maf_clear();
-	return;
 }
 
 #define HTC_BATTERY_ATTR(_name)							\
@@ -1204,15 +1161,17 @@ dont_need_update:
 
 static int htc_battery_thread(void *data)
 {
-	struct battery_info_reply buffer;
+	//struct battery_info_reply buffer;
 	daemonize("battery");
 	allow_signal(SIGKILL);
 
 	while (!signal_pending((struct task_struct *)current)) {
 		msleep(10000);
-		if (!bat_suspended && !htc_get_batt_info(&buffer)) {
+		if (!bat_suspended && !htc_get_batt_info(&htc_batt_info.rep)){
 			htc_batt_info.update_time = jiffies;
-			htc_battery_status_update(buffer.level);
+			//update if level changed
+			if(old_batt_info.level != htc_batt_info.rep.level)
+				power_supply_changed(&htc_power_supplies[CHARGER_BATTERY]);
 		}
 	}
 	return 0;
@@ -1222,6 +1181,7 @@ static int htc_battery_probe(struct platform_device *pdev)
 	int i, rc;
 	htc_batt_info.resources = (smem_batt_t *)pdev->dev.platform_data;
 
+	/* sanity checks */
 	if (!htc_batt_info.resources) {
 		BATT_ERR("%s: no pdata resources!\n", __FUNCTION__);
 		return -EINVAL;
@@ -1235,13 +1195,14 @@ static int htc_battery_probe(struct platform_device *pdev)
 		
 	/* init structure data member */
 	htc_batt_info.update_time 	= jiffies;
-	//r0bin: A9 will shutdown the phone if battery is pluged out, so this value is always 1
-	htc_batt_info.present 		= 1; //gpio_get_value(htc_batt_info.resources->gpio_battery_detect);
+	/* A9 will shutdown the phone if battery is pluged out, so this value is always 1 */
+	htc_batt_info.present 		= 1; 
+	
 	/* init power supplier framework */
 	for (i = 0; i < ARRAY_SIZE(htc_power_supplies); i++) {
 		rc = power_supply_register(&pdev->dev, &htc_power_supplies[i]);
 		if (rc)
-			BATT_ERR("Failed to register power supply (%d)\n", rc);
+			BATT_ERR("%s: Failed to register power supply (%d)", __func__, rc);
 	}
 
 	/* create htc detail attributes */
@@ -1251,9 +1212,10 @@ static int htc_battery_probe(struct platform_device *pdev)
 	if ( init_battery_settings( &htc_batt_info.rep ) < 0)
 		BATT_ERR("%s: init battery settings failed\n", __FUNCTION__);
 
-	htc_battery_initial = 1;
+	is_battery_initialized = 1;
 
 	htc_batt_info.update_time = jiffies;
+	/* lauch thread to poll battery status every 10 seconds */
 	kernel_thread(htc_battery_thread, NULL, CLONE_KERNEL);
 
 	not_yet_started = false;
@@ -1287,6 +1249,21 @@ static struct platform_driver htc_battery_driver = {
 	.resume = htc_battery_resume,
 };
 
+
+static void usb_status_notifier_func(int online)
+{
+	printk("%s: NOTIFIER Connected usb == %d\n", __func__,online);
+	if(online == 0)
+		g_usb_online = 0;
+	if(online == 1)
+		g_usb_online = 1;
+}
+static struct t_usb_status_notifier usb_status_notifier = {
+	.name = "htc_battery",
+	.func = usb_status_notifier_func,
+};
+
+
 static int __init htc_battery_init(void)
 {
 	// this used to be WAKE_LOCK_SUSPEND, but make it an idle lock in order to
@@ -1295,6 +1272,11 @@ static int __init htc_battery_init(void)
 	// is connected
 	wake_lock_init(&vbus_wake_lock, WAKE_LOCK_IDLE, "vbus_present");
 	mutex_init(&htc_batt_info.lock);
+	usb_register_notifier(&usb_status_notifier);
+	g_vbus_notifier_work_queue = create_workqueue("vbus-notifier");
+	if (g_vbus_notifier_work_queue == NULL) {
+		printk("%s error: vbus notifier workqueue creation failed\n",__func__);
+	}
 	platform_driver_register(&htc_battery_driver);
 	BATT("HTC Battery Driver initialized\n");
 

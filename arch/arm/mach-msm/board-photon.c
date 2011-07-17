@@ -33,7 +33,7 @@
 #include <linux/mtd/partitions.h>
 #include <linux/delay.h>
 #include <linux/gpio.h>
-
+#include <linux/workqueue.h>
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
@@ -252,8 +252,8 @@ static struct microp_led_config led_config[] = {
 		.name = "button-backlight",
 		.type = LED_PWM,
 		.led_pin = 1 << 5,
-		.init_value = 0x0,
-		.fade_time = 10,
+		.init_value = 1,
+		.fade_time = 5,
 	},
 };
 
@@ -328,21 +328,7 @@ static void liberty_phy_reset(void)
 }
 
 #ifdef CONFIG_USB_ANDROID
-static void usb_connected(int on) {
-	printk("%s: Connected usb == %d\n", __func__,on);
-	
-	switch (on) {
-	case 2: /* ac power */
-		//notify_usb_connected(2);
-		break;
-	case 1:	/* usb plugged in */
-		notify_usb_connected(1);
-		break;
-	case 0:
-		notify_usb_connected(0);
-	break;
-    }
-}
+static void usb_connected(int on) {/*printk("OLD%s notifier, online=%d\n",__func__,on);*/}
 
 static struct msm_hsusb_platform_data msm_hsusb_pdata = {
 	.phy_init_seq		= liberty_phy_init_seq,
