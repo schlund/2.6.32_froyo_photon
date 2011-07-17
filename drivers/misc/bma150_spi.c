@@ -574,7 +574,7 @@ static void bma150_work(struct work_struct *work)
 	z = vals[1];
 	//retrieve temperature
 	temp = spi_bma150_read_temp();
-	printk("MAAT bma150_work called, x=%d y=%d z=%d temp=%d\n",x,y,z,temp);	
+	//printk("MAAT bma150_work called, x=%d y=%d z=%d temp=%d\n",x,y,z,temp);	
 	//report update
 	input_report_abs(bma150_w->idev, ABS_X, x);
 	input_report_abs(bma150_w->idev, ABS_Y, y);
