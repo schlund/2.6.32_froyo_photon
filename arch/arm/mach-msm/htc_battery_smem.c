@@ -741,10 +741,10 @@ static void fix_batt_values(struct battery_info_reply *buffer) {
 		buffer->batt_vol = 4250;                                            
 	if ( buffer->batt_vol < 2600 )
 		buffer->batt_vol = 2600;
-	if ( buffer->batt_current > 500 )
-		buffer->batt_current = 500;                                        
-	if ( buffer->batt_current < -500 )
-		buffer->batt_current = -500;                                                     
+	if ( buffer->batt_current > 1000 )
+		buffer->batt_current = 1000;                                        
+	if ( buffer->batt_current < -1000 )
+		buffer->batt_current = -1000;                                                     
 	if ( buffer->batt_tempRAW > 637 )
 		buffer->batt_temp = 637;                                        
 	else if ( buffer->batt_tempRAW < 0 )
