@@ -165,6 +165,7 @@
 
 /* 35mm headset */
 #define LIBERTY_GPIO_35MM_HEADSET_DET    (83)
+#define PHOTON_GPIO_HEADSET_AMP    	 (89)
 
 /*Camera AF VCM POWER*/
 #define LIBERTY_GPIO_VCM_PWDN            (82)

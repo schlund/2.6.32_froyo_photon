@@ -37,12 +37,16 @@
 
 #include <asm/atomic.h>
 #include <asm/mach-types.h>
+#include <asm/gpio.h>
 
 #include <mach/board.h>
 #include <mach/vreg.h>
 #include <mach/atmega_microp.h>
-
 #include <mach/htc_headset_mgr.h>
+
+#include "gpio_chip.h"
+#include "board-photon.h"
+#include "proc_comm_wince.h"
 
 #define DRIVER_NAME "HS_MGR"
 
@@ -233,6 +237,38 @@ void hs_set_mic_select(int state)
 		hs_mgr_notifier.mic_select(state);
 }
 
+/** r0bin: fix for photon headset */
+/** Turn headset amp on/off */
+void photon_headset_amp(int enabled)
+{
+	if (enabled)
+	{
+		/* Power up headphone amp */
+		gpio_configure(PHOTON_GPIO_HEADSET_AMP, GPIOF_DRIVE_OUTPUT | GPIOF_OUTPUT_HIGH);
+		gpio_set_value(PHOTON_GPIO_HEADSET_AMP, 1);
+	}
+	else
+	{
+		/* Power down headphone amp */
+		gpio_configure(PHOTON_GPIO_HEADSET_AMP, GPIOF_DRIVE_OUTPUT | GPIOF_OUTPUT_LOW);
+		gpio_set_value(PHOTON_GPIO_HEADSET_AMP, 0);
+	}
+}
+/** send DEX to enable headset */
+void photon_headset_enable(int enabled)
+{
+	struct msm_dex_command dex;
+	dex.cmd=PCOM_UPDATE_AUDIO;
+	dex.has_data=1;
+	printk("%s, enable=%d\n",__func__,enabled);
+	/* WinMo sends two DEX calls, wether headset plugs or unplugs */
+	dex.data=0x1;
+	msm_proc_comm_wince(&dex,0);
+	dex.data=0x80;
+	msm_proc_comm_wince(&dex,0);
+}
+
+
 static void set_35mm_hw_state(int state)
 {
 	if (hi->mic_bias_state != state && hs_mgr_notifier.mic_bias_enable) {
@@ -249,6 +285,9 @@ static void set_35mm_hw_state(int state)
 
 	if (hs_mgr_notifier.key_int_enable)
 		hs_mgr_notifier.key_int_enable(state);
+	
+	//DEX to enable headset
+	photon_headset_enable(state);
 }
 
 #if 0

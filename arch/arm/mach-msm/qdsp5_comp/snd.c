@@ -30,11 +30,29 @@
 
 #include "snd.h"
 
+/* Taken from android hardware/msm7k/libaudio/AudioHardware.h
+ * Used for SND_SET_DEVICE ioctl
+ */
+#define SND_DEVICE_HANDSET 0
+#define SND_DEVICE_SPEAKER 1
+#define SND_DEVICE_HEADSET 2
+#define SND_DEVICE_BT 3
+#define SND_DEVICE_CARKIT 4
+#define SND_DEVICE_TTY_FULL 5
+#define SND_DEVICE_TTY_VCO 6
+#define SND_DEVICE_TTY_HCO 7
+#define SND_DEVICE_NO_MIC_HEADSET 8
+#define SND_DEVICE_FM_HEADSET 9
+#define SND_DEVICE_HEADSET_AND_SPEAKER 10
+#define SND_DEVICE_FM_SPEAKER 11
+#define SND_DEVICE_BT_EC_OFF 12
+
 static struct snd_ctxt the_snd;
 static struct msm_rpc_endpoint *snd_ept;
 static struct mutex rpc_lock;
 static struct task_struct *task;
 static unsigned kcount;
+extern void photon_headset_amp(int enabled);
 
 static void rpc_ack(struct msm_rpc_endpoint *ept, uint32_t xid)
 {
@@ -141,6 +159,7 @@ static int snd_rpc_thread(void *d)
 
 /* ----------------- r0bin fix ------------------- */
 
+/** Enable mic on A9 side */
 static struct msm_rpc_endpoint *endpoint = NULL;
 void photon_pm_mic_en()
 {
@@ -180,7 +199,7 @@ static long snd_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	struct snd_volume_config vol;
 	struct snd_ctxt *snd = file->private_data;
 	int rc = 0;
-
+	
 	mutex_lock(&snd->lock);
 	switch (cmd) {
 	case SND_SET_DEVICE:
@@ -195,14 +214,16 @@ static long snd_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		dmsg.args.cb_func = cpu_to_be32(0x11111111);
 		dmsg.args.client_data = cpu_to_be32(0x11223344);
 
-		pr_info("snd_set_device %d %d %d\n", dev.device,
-						 dev.ear_mute, dev.mic_mute);
+		//pr_info("snd_set_device %d %d %d\n", dev.device, dev.ear_mute, dev.mic_mute);
+		printk("TEST snd_set_device %d %d %d\n", dev.device, dev.ear_mute, dev.mic_mute);
+		
+		//r0bin: turn headset amp ON if needed
+		photon_headset_amp((dev.device == SND_DEVICE_HEADSET) || (dev.device == SND_DEVICE_NO_MIC_HEADSET));
 						 
-    //r0bin: enable mic for photon
-            photon_pm_mic_en();
+        //r0bin: enable mic for photon
+        photon_pm_mic_en();
 
-		msm_rpc_setup_req(&dmsg.hdr, RPC_SND_PROG, RPC_SND_VERS,
-			  SND_SET_DEVICE_PROC);
+		msm_rpc_setup_req(&dmsg.hdr, RPC_SND_PROG, RPC_SND_VERS, SND_SET_DEVICE_PROC);
 
 		rc = msm_rpc_write(snd->ept, &dmsg, sizeof(dmsg));
 		htc_pwrsink_audio_path_set(dmsg.args.device);
@@ -213,18 +234,16 @@ static long snd_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			rc = -EFAULT;
 			break;
 		}
-
 		vmsg.args.device = cpu_to_be32(vol.device);
 		vmsg.args.method = cpu_to_be32(vol.method);
 		vmsg.args.volume = cpu_to_be32(vol.volume);
 		vmsg.args.cb_func = cpu_to_be32(0x11111111);
 		vmsg.args.client_data = cpu_to_be32(0x11223344);
 
-		pr_info("snd_set_volume %d %d %d\n", vol.device,
-						vol.method, vol.volume);
+		//pr_info("snd_set_volume %d %d %d\n", vol.device, vol.method, vol.volume);
+		printk("TEST snd_set_volume %d %d %d\n", vol.device, vol.method, vol.volume);
 
-		msm_rpc_setup_req(&vmsg.hdr, RPC_SND_PROG, RPC_SND_VERS,
-			  SND_SET_VOLUME_PROC);
+		msm_rpc_setup_req(&vmsg.hdr, RPC_SND_PROG, RPC_SND_VERS, SND_SET_VOLUME_PROC);
 
 		rc = msm_rpc_write(snd->ept, &vmsg, sizeof(vmsg));
 		break;
