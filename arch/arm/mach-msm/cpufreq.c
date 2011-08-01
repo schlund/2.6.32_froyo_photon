@@ -90,6 +90,10 @@ static int __init msm_cpufreq_init(struct cpufreq_policy *policy)
 
 	BUG_ON(cpufreq_frequency_table_cpuinfo(policy, table));
 	policy->cur = acpuclk_get_rate();
+#ifndef CONFIG_PERFLOCK
+	policy->min = CONFIG_MSM_CPU_FREQ_ONDEMAND_MIN;
+	policy->max = CONFIG_MSM_CPU_FREQ_ONDEMAND_MAX;
+#endif
 	policy->cpuinfo.transition_latency =
 		acpuclk_get_switch_time() * NSEC_PER_USEC;
 	return 0;
@@ -115,5 +119,5 @@ static int __init msm_cpufreq_register(void)
 	return cpufreq_register_driver(&msm_cpufreq_driver);
 }
 
-//device_initcall(msm_cpufreq_register);
+device_initcall(msm_cpufreq_register);
 #endif

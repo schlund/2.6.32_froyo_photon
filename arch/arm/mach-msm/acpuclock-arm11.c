@@ -99,6 +99,7 @@ struct clkctl_acpu_speed {
 /* Index in acpu_freq_tbl[] for steppings. */
 	short		down;
 	short		up;
+	short		pll2_lval;
 };
 
 /*
@@ -115,11 +116,17 @@ static struct clkctl_acpu_speed msm7227_tbl[] = {
 	{  120000, ACPU_PLL_0, 4, 7,  60000, 1, VDD_3, 61440, 0, -1, 5 },
 	{  122880, ACPU_PLL_1, 1, 1,  61440, 1, VDD_3, 61440, 0, -1, 4 },
 	{  200000, ACPU_PLL_2, 2, 5,  66667, 2, VDD_4, 61440, 0, -1, 6 },
-	{  245760, ACPU_PLL_1, 1, 0, 122880, 1, VDD_4, 122880, 0, -1, 7 },
+	{  245760, ACPU_PLL_1, 1, 0, 122880, 1, VDD_4, 122880, 0, -1, 8 },
 	{  320000, ACPU_PLL_0, 4, 2, 160000, 1, VDD_5, 160000, 0, 1, 7 },
-	{  400000, ACPU_PLL_2, 2, 2, 133333, 2, VDD_5, 160000, 0, 3, -1 },
-	{  480000, ACPU_PLL_0, 4, 1, 160000, 2, VDD_6, 160000, 0, 5, -1 },
-	{  600000, ACPU_PLL_2, 2, 1, 200000, 2, VDD_7, 200000, 0, 6, -1 },
+	{  400000, ACPU_PLL_2, 2, 2, 100000, 2, VDD_5, 200000, 0, 3, 9 },
+	{  480000, ACPU_PLL_0, 4, 1, 160000, 2, VDD_6, 160000, 0, 3, 9 },
+	{  600000, ACPU_PLL_2, 2, 1, 200000, 2, VDD_7, 200000, 0, 5, 9 },
+	{  768000, ACPU_PLL_0, 4, 1, 192000, 3, VDD_7, 192000, 0, 5, -1, 0x28 },
+	{  787200, ACPU_PLL_0, 4, 1, 196800, 3, VDD_7, 196800, 0, 5, -1, 0x29 },
+	{  806400, ACPU_PLL_0, 4, 1, 201600, 3, VDD_7, 201600, 0, 5, -1, 0x2a },
+	{  825600, ACPU_PLL_0, 4, 1, 206400, 3, VDD_7, 206400, 0, 6, -1, 0x2b },
+	{  844800, ACPU_PLL_0, 4, 1, 211200, 3, VDD_7, 211200, 0, 6, -1, 0x2c },
+	{  864000, ACPU_PLL_0, 4, 1, 216000, 3, VDD_7, 216000, 0, 6, -1, 0x2d },
 	{  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 },
 };
 
@@ -161,13 +168,20 @@ static unsigned long max_axi_rate;
 #ifdef CONFIG_CPU_FREQ
 static struct cpufreq_frequency_table *freq_table;
 static struct cpufreq_frequency_table msm7227_freq_table[] = {
-	{ 0, 19200 },
+        { 0, 19200 },
 	{ 1, 122880 },
 	{ 2, 128000 },
 	{ 3, 245760 },
-	{ 4, 480000 },
-	{ 5, 600000 },
-	{ 6, CPUFREQ_TABLE_END },
+	{ 4, 400000 },
+	{ 5, 480000 },
+	{ 6, 600000 },
+	{ 7, 768000 },
+	{ 8, 787200 },
+	{ 9, 806400 },
+	{ 10, 825600 },
+	{ 11, 844800 },
+	{ 12, 864000 },
+	{ 13, CPUFREQ_TABLE_END },
 };
 
 static struct cpufreq_frequency_table msm72xx_freq_table[] = {
@@ -314,10 +328,20 @@ static int acpuclk_set_vdd_level(int vdd)
 
 /* Set proper dividers for the given clock speed. */
 static void acpuclk_set_div(const struct clkctl_acpu_speed *hunt_s) {
-	uint32_t reg_clkctl, reg_clksel, clk_div;
+	uint32_t reg_clkctl, reg_clksel, clk_div, a11_div;
 
 	/* AHB_CLK_DIV */
 	clk_div = (readl(A11S_CLK_SEL_ADDR) >> 1) & 0x03;
+
+	a11_div=hunt_s->a11clk_src_div;
+	
+	if (hunt_s->a11clk_khz > 600000 && hunt_s->pll2_lval > 0) {
+	        a11_div=0;
+	        writel(hunt_s->a11clk_khz/19200, MSM_CLK_CTL_BASE+0x304);
+	        udelay(50);
+	}
+
+	
 	/*
 	 * If the new clock divider is higher than the previous, then
 	 * program the divider before switching the clock
@@ -340,7 +364,7 @@ static void acpuclk_set_div(const struct clkctl_acpu_speed *hunt_s) {
 		/* Program clock divider */
 		reg_clkctl = readl(A11S_CLK_CNTL_ADDR);
 		reg_clkctl &= ~0xf;
-		reg_clkctl |= hunt_s->a11clk_src_div;
+		reg_clkctl |= a11_div;
 		writel(reg_clkctl, A11S_CLK_CNTL_ADDR);
 
 		/* Program clock source selection */
@@ -359,7 +383,7 @@ static void acpuclk_set_div(const struct clkctl_acpu_speed *hunt_s) {
 		/* Program clock divider */
 		reg_clkctl = readl(A11S_CLK_CNTL_ADDR);
 		reg_clkctl &= ~(0xf << 8);
-		reg_clkctl |= (hunt_s->a11clk_src_div << 8);
+		reg_clkctl |= (a11_div << 8);
 		writel(reg_clkctl, A11S_CLK_CNTL_ADDR);
 
 		/* Program clock source selection */
@@ -444,7 +468,7 @@ int acpuclk_set_rate(unsigned long rate, enum setrate_reason reason)
 
 	/* Set wait states for CPU inbetween frequency changes */
 	reg_clkctl = readl(A11S_CLK_CNTL_ADDR);
-	reg_clkctl |= (100 << 16); /* set WT_ST_CNT */
+	reg_clkctl |= (100 << 14); /* set WT_ST_CNT */
 	writel(reg_clkctl, A11S_CLK_CNTL_ADDR);
 
 	if (acpu_debug_mask & PERF_SWITCH_DEBUG)
@@ -570,6 +594,8 @@ static void __init acpuclk_init(void)
 	if (speed->a11clk_khz == 0) {
 		printk(KERN_WARNING "Warning - ACPU clock reports invalid speed\n");
 		return;
+	}else{
+		printk(KERN_INFO "ACPU running at %d KHz\n", speed->a11clk_khz);
 	}
 
 	drv_state.current_speed = speed;
@@ -579,7 +605,7 @@ static void __init acpuclk_init(void)
 		pr_err("Setting AXI min rate failed!\n");
 
 	for (speed = acpu_freq_tbl; speed->a11clk_khz != 0; speed++)
-		;
+		printk(KERN_INFO "ACPU speed %d KHz\n", speed->a11clk_khz);;
 
 	max_s = speed - 1;
 	max_axi_rate = max_s->axiclk_khz * 1000;
