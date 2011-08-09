@@ -245,6 +245,7 @@ void photon_headset_amp(int enabled)
 	{
 		/* Power up headphone amp */
 		gpio_configure(PHOTON_GPIO_HEADSET_AMP, GPIOF_DRIVE_OUTPUT | GPIOF_OUTPUT_HIGH);
+    mdelay(15);
 		gpio_set_value(PHOTON_GPIO_HEADSET_AMP, 1);
 	}
 	else
