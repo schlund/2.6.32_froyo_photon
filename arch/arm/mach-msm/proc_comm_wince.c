@@ -198,7 +198,7 @@ void dump_debug_stuff(void)
 	DUMP_PLL("PLL0", PLLn_BASE(0));
 	DUMP_PLL("PLL1", PLLn_BASE(1));
 	DUMP_PLL("PLL2", PLLn_BASE(2));
-	DUMP_PLL("PLL3", PLLn_BASE(3));
+	//DUMP_PLL("PLL3", PLLn_BASE(3));
 
 	// Dump PCB XC
 	pcb_xc = readl(MSM_SHARED_RAM_BASE + 0xfc048);
