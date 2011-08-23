@@ -65,9 +65,7 @@ static int rtc_suspend(struct device *dev, pm_message_t mesg)
 	/* prevent 1/2 sec errors from accumulating */
 	delta_delta = timespec_sub(new_delta, delta);
 	if (delta_delta.tv_sec < -2 || delta_delta.tv_sec >= 2)
-		delta = new_delta;
-	
-	printk("%s, system time=%lu sec, rtc time=%lu sec, delta=%lu sec\n",__func__,oldtime,ts.tv_sec,delta.tv_sec);
+		delta = new_delta;	
 	return 0;
 }
 
@@ -91,40 +89,18 @@ static int rtc_resume(struct device *dev)
 		newtime++;
 	if (newtime <= oldtime) {
 		if (newtime < oldtime)
-		{
 			pr_debug("%s:  time travel!\n", dev_name(&rtc->dev));
-			printk("%s, time travel!\n",__func__);
-		}
 		return 0;
 	}
-
+ 
 	/* restore wall clock using delta against this RTC;
 	 * adjust again for avg 1/2 second RTC sampling error
 	 */
-	
-	//set_normalized_timespec(&time,
-	//			newtime + delta.tv_sec,
-	//			(NSEC_PER_SEC >> 1) + delta.tv_nsec);
+	//r0bin: workaround for clock: use only A9 clock
+	//set_normalized_timespec(&time, newtime + delta.tv_sec, (NSEC_PER_SEC >> 1) + delta.tv_nsec);
 	set_normalized_timespec(&time,newtime,(NSEC_PER_SEC >> 1));
-	
+
 	do_settimeofday(&time);
-	{
-		struct rtc_time		tm2;
-		rtc_time_to_tm(time.tv_sec,&tm2);
-		
-		printk("%s, oldtime=%lu newtime=%lu\n",__func__,oldtime,newtime);
-		printk(	"%s raw time :"
-				"%d-%02d-%02d %02d:%02d:%02d UTC (%lu sec)\n",__func__,
-				tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
-				tm.tm_hour, tm.tm_min, tm.tm_sec,newtime);
-		printk("%s ADDING DELTA = (%u)\n",__func__,(unsigned int) delta.tv_nsec);
-		
-		printk(	"%s setting system clock to "
-				"%d-%02d-%02d %02d:%02d:%02d UTC (%u sec)\n",__func__,
-				tm2.tm_year + 1900, tm2.tm_mon + 1, tm2.tm_mday,
-				tm2.tm_hour, tm2.tm_min, tm2.tm_sec,
-				(unsigned int) time.tv_sec);
-	}
 	printk("%s, %d\n",__func__,__LINE__);
 	return 0;
 }
