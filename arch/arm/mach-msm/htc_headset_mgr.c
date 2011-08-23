@@ -245,13 +245,14 @@ void photon_headset_amp(int enabled)
 	{
 		/* Power up headphone amp */
 		gpio_configure(PHOTON_GPIO_HEADSET_AMP, GPIOF_DRIVE_OUTPUT | GPIOF_OUTPUT_HIGH);
-    mdelay(15);
+		msleep(20);
 		gpio_set_value(PHOTON_GPIO_HEADSET_AMP, 1);
 	}
 	else
 	{
 		/* Power down headphone amp */
 		gpio_configure(PHOTON_GPIO_HEADSET_AMP, GPIOF_DRIVE_OUTPUT | GPIOF_OUTPUT_LOW);
+		msleep(20);
 		gpio_set_value(PHOTON_GPIO_HEADSET_AMP, 0);
 	}
 }
@@ -986,7 +987,10 @@ static int htc_headset_mgr_probe(struct platform_device *pdev)
 		}
 		HS_LOG("Create RPC server successfully");
 	}
-
+	
+	//request GPIO for amp
+	gpio_request(PHOTON_GPIO_HEADSET_AMP,"headset_amp_en");
+	
 	hs_notify_driver_ready(DRIVER_NAME);
 
 	HS_LOG("--------------------");
