@@ -137,10 +137,10 @@ static uint32_t qdsp_hadron_queue_offset_table[] =
   0x14c,               /* QDSP_uPAudRecBitStreamQueue       */
   0x148,               /* QDSP_uPAudRecCmdQueue             */
   0x11c,               /* QDSP_uPDiagQueue                  */
-  0x168,               /* QDSP_uPJpegActionCmdQueue         */
-  0x164,               /* QDSP_uPJpegCfgCmdQueue            */
   0x118,               /* QDSP_uPJpegFTMActionCmdQueue      */
   0x114,               /* QDSP_uPJpegFTMCfgCmdQueue         */
+  0x168,               /* QDSP_uPJpegActionCmdQueue         */
+  0x164,               /* QDSP_uPJpegCfgCmdQueue            */
   0x104,               /* QDSP_uPVocProcQueue               */
   0x120,               /* QDSP_vfeCommandQueue              */
   0x128,               /* QDSP_vfeCommandScaleQueue         */
