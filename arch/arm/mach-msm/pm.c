@@ -49,6 +49,13 @@
 #include <linux/wakelock.h>
 #endif
 
+#define SCHLUNDFIX		1
+
+#ifdef SCHLUNDFIX
+#include "proc_comm_wince.h"
+#include <asm/gpio.h>
+#endif
+
 enum {
 	MSM_PM_DEBUG_SUSPEND = 1U << 0,
 	MSM_PM_DEBUG_POWER_COLLAPSE = 1U << 1,
@@ -257,11 +264,19 @@ msm_pm_wait_state(uint32_t wait_all_set, uint32_t wait_all_clear,
 
 	for (i = 0; i < 100000; i++) {
 		state = smsm_get_state(PM_SMSM_READ_STATE);
+#if !defined(SCHLUNDFIX)
 		if (((wait_all_set || wait_all_clear) && 
 		     !(~state & wait_all_set) && !(state & wait_all_clear)) ||
 		    (state & wait_any_set) || (~state & wait_any_clear))
 			return 0;
 		udelay(1);
+#else
+		if (((state & wait_all_set) == wait_all_set) &&
+		    ((~state & wait_all_clear) == wait_all_clear) &&
+		    (wait_any_set == 0 || (state & wait_any_set) ||
+		     wait_any_clear == 0 || (state & wait_any_clear)))
+			return 0;
+#endif
 	}
 	pr_err("msm_pm_wait_state(%x, %x, %x, %x) failed %x\n",	wait_all_set,
 		wait_all_clear, wait_any_set, wait_any_clear, state);
@@ -288,6 +303,18 @@ static DECLARE_DELAYED_WORK(work_expire_boot_lock, do_expire_boot_lock);
 static void
 msm_pm_enter_prep_hw(void)
 {
+#if defined(SCHLUNDFIX)
+	// tell ARM9 we are going to suspend
+	writel(1, MSM_SHARED_RAM_BASE + 0xfc100);
+	writel(readl(MSM_SHARED_RAM_BASE + 0xfc108) + 1, MSM_SHARED_RAM_BASE + 0xfc108);
+
+	writel(0x7f, A11S_CLK_SLEEP_EN); // halt all clocks
+	writel(1, A11S_PWRDOWN); // power down and wait for interrupt
+	writel(0x08, A11S_STANDBY_CTL); // hw control back bias on, wait 0 clks after interrupt
+	writel(0, A11RAMBACKBIAS);
+
+	return;
+#endif
 #if defined(CONFIG_ARCH_MSM7X30)
 	writel(1, A11S_PWRDOWN);
 	writel(4, A11S_SECOP);
@@ -313,6 +340,11 @@ msm_pm_enter_prep_hw(void)
 static void
 msm_pm_exit_restore_hw(void)
 {
+#if defined(SCHLUNDFIX)
+	writel(0, MSM_SHARED_RAM_BASE + 0xfc100);
+	/* ARM9 puts the irq status here. We need this on wake up to know if some interrupts were triggered. */
+	//~ writel(0, MSM_SHARED_RAM_BASE + 0xfc128);
+#endif
 #if defined(CONFIG_ARCH_MSM7X30)
 	writel(0, A11S_SECOP);
 	writel(0, A11S_PWRDOWN);
@@ -866,7 +898,29 @@ static int set_offmode_alarm(void)
 
 static void msm_pm_power_off(void)
 {
+	unsigned num = 0;
 	printk(KERN_INFO "msm_pm_power_off:wakeup after %d\r\n", msm_wakeup_after);
+#if defined(SCHLUNDFIX)
+#define MSM_A2M_INT(n) (MSM_CSR_BASE + 0x400 + (n) * 4)
+	/* 1. dex 0x14 without interupts (disable irq + write 0x14 to smem) */
+	local_irq_disable();
+	writeb(PCOM_POWER_OFF, (unsigned)(MSM_SHARED_RAM_BASE + 0xfc100));
+	/* 2. dex counter ++ */
+	num = readl((unsigned)(MSM_SHARED_RAM_BASE + 0xfc108)) + 1;
+	writel(num, (unsigned)(MSM_SHARED_RAM_BASE + 0xfc108));
+	/* 3.     A2M = -1 */
+	writel(-1, MSM_A2M_INT(6));
+	/* 4. sleep 500ms */
+	mdelay(500);
+	/* 5. set smem sign 0x55AA00FF */
+	writel(0x55AA00FF, (unsigned)(MSM_SHARED_RAM_BASE + 0xfc08c));
+	mdelay(500);
+	/* 6. gpio reset */
+	writel(readl(MSM_GPIO2E_BASE + 0x504) | (1 << 9), MSM_GPIO2E_BASE + 0x504);
+	mdelay(50);
+	gpio_set_value(0x19, 0);
+#else
+
 
 #ifdef CONFIG_HTC_OFFMODE_ALARM
 	set_offmode_alarm();
@@ -880,6 +934,7 @@ static void msm_pm_power_off(void)
 		printk(KERN_INFO "from %s\r\n", __func__);
 		wait_rmt_final_call_back(10);
 		printk(KERN_INFO "back %s\r\n", __func__);
+#endif
 #endif
 	for (;;) ;
 }
