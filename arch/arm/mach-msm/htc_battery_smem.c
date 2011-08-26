@@ -43,8 +43,11 @@ static int bat_suspended = 0;
 static int batt_vref = 1238;
 static int batt_vref_half = 615;
 static int g_usb_online;
-DECLARE_COMPLETION(batt_thread_stopped);
-	
+#undef NO_BATTERY_COMPUTATION_IN_SUSPEND_MODE 
+#ifdef NO_BATTERY_COMPUTATION_IN_SUSPEND_MODE
+DECLARE_COMPLETION(batt_thread_can_start);
+#endif
+
 enum {
 	DEBUG_BATT	= 1<<0,
 	DEBUG_CABLE	= 1<<1,
@@ -169,6 +172,7 @@ static void maf_clear(void)
 	volt_maf_size = 0;
 	volt_maf_last = 0;
 }
+
 
 /* ADC linear correction numbers.
  */
@@ -534,6 +538,9 @@ int htc_cable_status_update(const char *sfrom)
 	mutex_unlock(&htc_batt_info.lock);
 	
     htc_battery_set_charging(status);
+	//r0bin: fix battery drain issue & keep usb connection stable!
+	if(!((source==CHARGER_USB) || (source==CHARGER_AC)))
+		msm_hsusb_set_vbus_state(0);
 	
 	if (  source == CHARGER_USB || source==CHARGER_AC ) {
 		wake_lock(&vbus_wake_lock);
@@ -1127,16 +1134,19 @@ static int htc_battery_thread(void *data)
 	int percent_tab[BATT_SAMPLES_NUMBER];
 	int tab_index = 0;
 	int i;
-	struct completion *local_batt_thread_stopped = (struct completion *)data;
 	
 	//struct battery_info_reply buffer;
 	daemonize("battery");
 	allow_signal(SIGKILL);
 
-	while ((!signal_pending((struct task_struct *)current)) && (!bat_suspended)) {
-		//get batt data every second
-		msleep(1000);
+	while ((!signal_pending((struct task_struct *)current))) {
+		//when battery is suspended, work slower to save power
+		if(bat_suspended)
+			msleep(10000);
+		else
+			msleep(1000);
 
+#ifdef NO_BATTERY_COMPUTATION_IN_SUSPEND_MODE		
 		//dont work in sleep mode!
 		if (bat_suspended)
 		{
@@ -1155,53 +1165,60 @@ static int htc_battery_thread(void *data)
 				//update power supply class
 				power_supply_changed(&htc_power_supplies[CHARGER_BATTERY]);
 			}
-			goto exit_thread;
-		}
-
-		//read raw SMEM values
-		htc_get_batt_smem_info(&htc_batt_data_smooth);
-		mutex_unlock(&htc_batt_info.lock);
-			
-		//grab charging status from global var, it is updated by IRQ 
-		htc_batt_data_smooth.charging_enabled = htc_batt_info.rep.charging_enabled;
-		htc_batt_data_smooth.charging_source = htc_batt_info.rep.charging_source;
-		
-		//get real volt, temp and current values 
-		htc_photon_batt_corr( &htc_batt_data_smooth );
-		//fix values in case they are out of bounds 
-		fix_batt_values( &htc_batt_data_smooth);
-		//compute battery level based on battery values 
-		htc_battery_level_compute( &htc_batt_data_smooth );
-		//record this value
-		percent_tab[tab_index] = htc_batt_data_smooth.level;
-		tab_index++;
-		//update official batt info, but not the level!
-		htc_batt_info.rep.batt_id	=	htc_batt_data_smooth.batt_id;
-		htc_batt_info.rep.batt_vol	=	htc_batt_data_smooth.batt_vol;	
-		htc_batt_info.rep.batt_temp	=	htc_batt_data_smooth.batt_temp;	
-		htc_batt_info.rep.batt_current	=	htc_batt_data_smooth.batt_current;	
-		htc_batt_info.rep.batt_discharge	=	htc_batt_data_smooth.batt_discharge;
-		htc_batt_info.update_time = jiffies;
-		//if we got our 30 samples, it's time to compute the average level
-		if(tab_index >= BATT_SAMPLES_NUMBER)
-		{
-			int smooth_lvl = 0;
 			tab_index = 0;
-			//compute average level
-			for(i=0;i<BATT_SAMPLES_NUMBER;i++)
-				smooth_lvl += percent_tab[i];		
-			smooth_lvl = smooth_lvl / BATT_SAMPLES_NUMBER;
-			printk("%s, %d samples ready, average percentage=%d\n",__func__,BATT_SAMPLES_NUMBER,smooth_lvl);
-			//smooth batt level
-			htc_batt_info.rep.level = smooth_lvl;
+			//put on sleep, waiting for signal to wake up
+			printk("%s, put batt thread on sleep!\n",__func__);
+			wait_for_completion(&batt_thread_can_start);
+			printk("%s, batt_thread_can_start!\n",__func__);
+		}else
+#endif
+		{
+			//read raw SMEM values
+			htc_get_batt_smem_info(&htc_batt_data_smooth);
+			mutex_unlock(&htc_batt_info.lock);
+				
+			//grab charging status from global var, it is updated by IRQ 
+			htc_batt_data_smooth.charging_enabled = htc_batt_info.rep.charging_enabled;
+			htc_batt_data_smooth.charging_source = htc_batt_info.rep.charging_source;
+			
+			//get real volt, temp and current values 
+			htc_photon_batt_corr( &htc_batt_data_smooth );
+			//fix values in case they are out of bounds 
+			fix_batt_values( &htc_batt_data_smooth);
+			//compute battery level based on battery values 
+			htc_battery_level_compute( &htc_batt_data_smooth );
+			//record this value
+			percent_tab[tab_index] = htc_batt_data_smooth.level;
+			tab_index++;
+			//update official batt info, but not the level!
+			mutex_lock(&htc_batt_info.lock);
+			htc_batt_info.rep.batt_id	=	htc_batt_data_smooth.batt_id;
+			htc_batt_info.rep.batt_vol	=	htc_batt_data_smooth.batt_vol;	
+			htc_batt_info.rep.batt_temp	=	htc_batt_data_smooth.batt_temp;	
+			htc_batt_info.rep.batt_current	=	htc_batt_data_smooth.batt_current;	
+			htc_batt_info.rep.batt_discharge	=	htc_batt_data_smooth.batt_discharge;
 			htc_batt_info.update_time = jiffies;
+			mutex_unlock(&htc_batt_info.lock);
+			//if we got our 30 samples, it's time to compute the average level
+			if(tab_index >= BATT_SAMPLES_NUMBER)
+			{
+				int smooth_lvl = 0;
+				tab_index = 0;
+				//compute average level
+				for(i=0;i<BATT_SAMPLES_NUMBER;i++)
+					smooth_lvl += percent_tab[i];		
+				smooth_lvl = smooth_lvl / BATT_SAMPLES_NUMBER;
+				//printk("%s, %d samples ready, average percentage=%d\n",__func__,BATT_SAMPLES_NUMBER,smooth_lvl);
+				//smooth batt level
+				htc_batt_info.rep.level = smooth_lvl;
+				htc_batt_info.update_time = jiffies;
+			}
+			//report batt info changed every 5 samples (update temp, volt, current)
+			if(tab_index%5 == 0) 
+				power_supply_changed(&htc_power_supplies[CHARGER_BATTERY]);
 		}
-		//notify we changed batt info
-		power_supply_changed(&htc_power_supplies[CHARGER_BATTERY]);
 	}
-exit_thread:
-	// notify ready for action
-    complete(local_batt_thread_stopped);
+
 	return 0;
 }
 	
@@ -1247,9 +1264,7 @@ static int htc_battery_probe(struct platform_device *pdev)
 	htc_batt_info.update_time = jiffies;
 	
 	/* lauch thread to poll battery status every x seconds */
-	INIT_COMPLETION(batt_thread_stopped);
-	kernel_thread(htc_battery_thread, &batt_thread_stopped, CLONE_KERNEL);
-
+	kernel_thread(htc_battery_thread, NULL, CLONE_KERNEL);
 	
 	not_yet_started = false;
 	return 0;
@@ -1258,9 +1273,10 @@ static int htc_battery_probe(struct platform_device *pdev)
 #if CONFIG_PM
 static int htc_battery_suspend(struct platform_device* device, pm_message_t mesg)
 {
+#ifdef NO_BATTERY_COMPUTATION_IN_SUSPEND_MODE
+	INIT_COMPLETION(batt_thread_can_start);
+#endif
 	bat_suspended = 1;
-	/* wait kernel thread to finish */
-	wait_for_completion(&batt_thread_stopped);
 	return 0;
 }
 
@@ -1268,10 +1284,10 @@ static int htc_battery_resume(struct platform_device* device)
 {
 	bat_suspended = 0;
 	maf_clear();
-	/* lauch thread to poll battery status every x seconds */
-	/* note: this thread should have been already stopped by htc_battery_suspend */
-	INIT_COMPLETION(batt_thread_stopped);
-	kernel_thread(htc_battery_thread, &batt_thread_stopped, CLONE_KERNEL);
+#ifdef NO_BATTERY_COMPUTATION_IN_SUSPEND_MODE
+	// notify ready for action
+    complete(&batt_thread_can_start);
+#endif
 	return 0; 
 }
 #else
