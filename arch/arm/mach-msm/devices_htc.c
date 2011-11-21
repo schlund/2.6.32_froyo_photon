@@ -39,6 +39,7 @@
 #include <linux/msm_kgsl.h>
 #include <mach/dal_axi.h>
 #include "proc_comm.h"
+#include <mach/htc_acoustic_wince.h>
 
 #ifndef CONFIG_ARCH_MSM7X30
 struct platform_device *devices[] __initdata = {
@@ -502,3 +503,72 @@ static int __init parse_tag_ps_calibration(const struct tag *tag)
 }
 
 __tagtable(ATAG_PS, parse_tag_ps_calibration);
+
+/******************************************************************************
+ * Acoustic driver settings
+ ******************************************************************************/
+static struct msm_rpc_endpoint *mic_endpoint = NULL;
+
+static void amss_5225_mic_bias_callback(bool on) {
+	  struct {
+			  struct rpc_request_hdr hdr;
+			  uint32_t data;
+	  } req;
+
+	  if (!mic_endpoint)
+			  mic_endpoint = msm_rpc_connect(0x30000061, 0x0, 0);
+	  if (!mic_endpoint) {
+			  printk(KERN_ERR "%s: couldn't open rpc endpoint\n", __func__);
+			  return;
+	  }
+	  req.data=cpu_to_be32(on);
+	  msm_rpc_call(mic_endpoint, 0x1c, &req, sizeof(req), 5 * HZ);
+}
+//for photon
+void amss_4735_mic_bias_callback(bool on)
+{
+	int ret;
+	int mprog=0x30000061;
+	int mvers=0x10001;
+	
+	struct {
+		struct rpc_request_hdr hdr;
+		uint32_t data;
+	} req;
+
+	if (!mic_endpoint)
+		mic_endpoint = msm_rpc_connect(mprog, mvers, 0);
+	if (!mic_endpoint) {
+		printk("Couldn't open rpc endpoint 0x%x vers 0x%x\n",mprog,mvers);
+		mvers=0x0;
+		mic_endpoint = msm_rpc_connect(mprog, mvers, 0);
+		if (!mic_endpoint) {
+			printk("Couldn't open rpc endpoint 0x%x vers 0x%x\n",mprog,mvers);
+			return;
+		}
+	}
+	req.data=cpu_to_be32(on);
+	ret = msm_rpc_call(mic_endpoint, 0x1c, &req, sizeof(req), 5 * HZ);
+	if (ret < 0)
+		printk(KERN_ERR "%s: rpc call failed! (%d)\n", __func__, ret);
+}
+
+//Table for photon
+struct htc_acoustic_wce_amss_data amss_4735_acoustic_data = {
+	.volume_table = 0, //0xacc71aa8
+	.wb_volume_table = 0x19A, //0xACC71C42
+	.ce_table = 0x17b4, //0xacc7325c
+	.adie_table = 0xbb4, //0xacc7265c
+	.codec_table = 0x334, //0xacc71ddc
+	.mic_offset = (MSM_SHARED_RAM_BASE+0x719a8), //0xacc719a8
+	.voc_cal_field_size = 17, //0x11
+	.mic_bias_callback = amss_4735_mic_bias_callback,
+};
+
+struct platform_device acoustic_device = {
+	.name = "htc_acoustic",
+	.id = -1,
+	.dev = {
+		.platform_data = &amss_4735_acoustic_data,
+		},
+};

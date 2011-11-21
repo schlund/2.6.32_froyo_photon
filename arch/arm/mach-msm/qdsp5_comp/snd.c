@@ -30,29 +30,13 @@
 
 #include "snd.h"
 
-/* Taken from android hardware/msm7k/libaudio/AudioHardware.h
- * Used for SND_SET_DEVICE ioctl
- */
-#define SND_DEVICE_HANDSET 0
-#define SND_DEVICE_SPEAKER 1
-#define SND_DEVICE_HEADSET 2
-#define SND_DEVICE_BT 3
-#define SND_DEVICE_CARKIT 4
-#define SND_DEVICE_TTY_FULL 5
-#define SND_DEVICE_TTY_VCO 6
-#define SND_DEVICE_TTY_HCO 7
-#define SND_DEVICE_NO_MIC_HEADSET 8
-#define SND_DEVICE_FM_HEADSET 9
-#define SND_DEVICE_HEADSET_AND_SPEAKER 10
-#define SND_DEVICE_FM_SPEAKER 11
-#define SND_DEVICE_BT_EC_OFF 12
-
 static struct snd_ctxt the_snd;
-static struct msm_rpc_endpoint *snd_ept;
+static int force_headset=0;
+module_param_named(force_headset, force_headset, int, S_IRUGO | S_IWUSR | S_IWGRP);
+
 static struct mutex rpc_lock;
 static struct task_struct *task;
 static unsigned kcount;
-extern void photon_headset_amp(int enabled);
 
 static void rpc_ack(struct msm_rpc_endpoint *ept, uint32_t xid)
 {
@@ -73,6 +57,7 @@ static void process_rpc_request(uint32_t proc, uint32_t xid,
 {
 	uint32_t *x = data;
 	uint32_t cb_id, data_len, pointer;
+	struct snd_ctxt *snd = &the_snd;
 
 	if (0) {
 		int n = len / 4;
@@ -86,24 +71,25 @@ static void process_rpc_request(uint32_t proc, uint32_t xid,
 		cb_id = be32_to_cpu(*x++);
 		pointer = be32_to_cpu(*x++);
 		data_len = be32_to_cpu(*x++);
-		put_vocpcm_data(x, cb_id, data_len, snd_ept, xid);
-		rpc_in_ack(snd_ept, xid);
+		put_vocpcm_data(x, cb_id, data_len, snd->ept, xid);
+		rpc_in_ack(snd->ept, xid);
 	} else if (proc == VOC_PCM_CLIENT_OUTPUT_PTR) {
 		cb_id = be32_to_cpu(*x++);
 		data_len = be32_to_cpu(*x++);
 		get_vocpcm_data(x, cb_id, data_len);
-		rpc_ack(snd_ept, xid);
+		rpc_ack(snd->ept, xid);
 	} else if (proc == SND_CB_FUNC_PTR_TYPE_PROC) {
-		rpc_ack(snd_ept, xid);
+		rpc_ack(snd->ept, xid);
 	} else {
 		pr_err("snd_client: unknown rpc proc %d\n", proc);
-		rpc_ack(snd_ept, xid);
+		rpc_ack(snd->ept, xid);
 	}
 }
 
 static int snd_rpc_thread(void *d)
 {
 	struct rpc_request_hdr *hdr = NULL;
+	struct snd_ctxt *snd = &the_snd;
 	uint32_t type;
 	int len;
 
@@ -113,7 +99,7 @@ static int snd_rpc_thread(void *d)
 			kfree(hdr);
 			hdr = NULL;
 		}
-		len = msm_rpc_read(snd_ept, (void **) &hdr, -1, -1);
+		len = msm_rpc_read(snd->ept, (void **) &hdr, -1, -1);
 		if (len < 0) {
 			pr_err("snd: rpc read failed (%d)\n", len);
 			break;
@@ -156,38 +142,74 @@ static int snd_rpc_thread(void *d)
 	}
 	return 0;
 }
+struct snd_endpoint *get_snd_endpoints(int *size);
 
-/* ----------------- r0bin fix ------------------- */
+static int currentDevice = 0;
+static int IdleDeviceID = 0;
 
-/** Enable mic on A9 side */
-static struct msm_rpc_endpoint *endpoint = NULL;
-void photon_pm_mic_en()
+static inline int get_idle_deviceid(void)
 {
-	int ret;
-	int mprog=0x30000061;
-	int mvers=0x10001;
-	
-	struct {
-		struct rpc_request_hdr hdr;
-		uint32_t data;
-	} req;
+    int i;
+    struct snd_ctxt *snd = &the_snd;
 
-	if (!endpoint)
-		endpoint = msm_rpc_connect(mprog, mvers, 0);
-	if (!endpoint) {
-		printk("Couldn't open rpc endpoint 0x%x vers 0x%x\n",mprog,mvers);
-		mvers=0x0;
-		endpoint = msm_rpc_connect(mprog, mvers, 0);
-		if (!endpoint) {
-			printk("Couldn't open rpc endpoint 0x%x vers 0x%x\n",mprog,mvers);
-			return;
-		}
-	}
-	req.data=cpu_to_be32(0x1);
-	ret = msm_rpc_call(endpoint, 0x1c, &req, sizeof(req), 5 * HZ);
-	if (ret < 0)
-		printk(KERN_ERR "%s: rpc call failed! (%d)\n", __func__, ret);
+    for (i = 0; i < snd->snd_epts->num; i++ ) {
+        if (!strcmp("IDLE", snd->snd_epts->endpoints[i].name)) {
+            printk("Found SND_DEVICE_IDLE id %d\n", snd->snd_epts->endpoints[i].id);
+            return snd->snd_epts->endpoints[i].id;
+        }
+    }
+
+    printk("SND_DEVICE_IDLE not found\n");
+    /* default to earcuple */
+    return 0;
 }
+
+static inline void check_device(int *device)
+{
+    /* Is device ID out of range ? */
+    if ( *device > IdleDeviceID ) {
+        pr_err("snd device out of range: use last device id %d.\n", currentDevice);
+        *device = currentDevice;
+    } else {
+        currentDevice = *device;
+    }
+}
+
+static inline int check_mute(int mute)
+{
+	return (mute == SND_MUTE_MUTED ||
+		mute == SND_MUTE_UNMUTED) ? 0 : -EINVAL;
+}
+
+static int get_endpoint(struct snd_ctxt *snd, unsigned long arg)
+{
+	int rc = 0, index;
+	struct msm_snd_endpoint ept;
+
+	if (copy_from_user(&ept, (void __user *)arg, sizeof(ept))) {
+		pr_err("snd_ioctl get endpoint: invalid read pointer.\n");
+		return -EFAULT;
+	}
+
+	index = ept.id;
+	if (index < 0 || index >= snd->snd_epts->num) {
+		pr_err("snd_ioctl get endpoint: invalid index!\n");
+		return -EINVAL;
+	}
+
+	ept.id = snd->snd_epts->endpoints[index].id;
+	strncpy(ept.name,
+		snd->snd_epts->endpoints[index].name,
+		sizeof(ept.name));
+
+	if (copy_to_user((void __user *)arg, &ept, sizeof(ept))) {
+		pr_err("snd_ioctl get endpoint: invalid write pointer.\n");
+		rc = -EFAULT;
+	}
+
+	return rc;
+}
+
 
 /* ------------------- device --------------------- */
 
@@ -208,23 +230,35 @@ static long snd_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			break;
 		}
 
+		if (check_mute(dev.ear_mute) ||
+				check_mute(dev.mic_mute) ) {
+			pr_err("snd_ioctl set device: invalid mute status.\n");
+			rc = -EINVAL;
+			break;
+		}
+
+                /* Prevent wrong device to make the snd processor crashing */
+                check_device(&dev.device);
+		if(force_headset && (force_headset==2))
+		   dev.device=2;
+
 		dmsg.args.device = cpu_to_be32(dev.device);
 		dmsg.args.ear_mute = cpu_to_be32(dev.ear_mute);
 		dmsg.args.mic_mute = cpu_to_be32(dev.mic_mute);
-		dmsg.args.cb_func = cpu_to_be32(0x11111111);
-		dmsg.args.client_data = cpu_to_be32(0x11223344);
+		dmsg.args.cb_func = -1;
+		dmsg.args.client_data = 0;
 
 		//pr_info("snd_set_device %d %d %d\n", dev.device, dev.ear_mute, dev.mic_mute);
-		printk("TEST snd_set_device %d %d %d\n", dev.device, dev.ear_mute, dev.mic_mute);
-		
-		//r0bin: turn headset amp ON if needed
-		photon_headset_amp((dev.device == SND_DEVICE_HEADSET) || (dev.device == SND_DEVICE_NO_MIC_HEADSET));
+		printk("TEST snd_set_device %d %d %d\n", dev.device, dev.ear_mute, dev.mic_mute);	
+
+		if(!snd->ept) {
+			pr_err("No sound endpoint found, can't set snd_device");
+			return -EIO;
+		}
+	
+		msm_rpc_setup_req(&dmsg.hdr, RPC_SND_PROG, RPC_SND_VERS,
+			  SND_SET_DEVICE_PROC);
 						 
-        //r0bin: enable mic for photon
-        photon_pm_mic_en();
-
-		msm_rpc_setup_req(&dmsg.hdr, RPC_SND_PROG, RPC_SND_VERS, SND_SET_DEVICE_PROC);
-
 		rc = msm_rpc_write(snd->ept, &dmsg, sizeof(dmsg));
 		htc_pwrsink_audio_path_set(dmsg.args.device);
 		break;
@@ -234,20 +268,39 @@ static long snd_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			rc = -EFAULT;
 			break;
 		}
+		
 		vmsg.args.device = cpu_to_be32(vol.device);
 		vmsg.args.method = cpu_to_be32(vol.method);
+		if (vol.method != SND_METHOD_VOICE && vol.method != SND_METHOD_AUDIO) {
+			pr_err("snd_ioctl set volume: invalid method.\n");
+			rc = -EINVAL;
+			break;
+		}
+
 		vmsg.args.volume = cpu_to_be32(vol.volume);
-		vmsg.args.cb_func = cpu_to_be32(0x11111111);
-		vmsg.args.client_data = cpu_to_be32(0x11223344);
+		vmsg.args.cb_func = -1;
+		vmsg.args.client_data = 0;
 
 		//pr_info("snd_set_volume %d %d %d\n", vol.device, vol.method, vol.volume);
-		printk("TEST snd_set_volume %d %d %d\n", vol.device, vol.method, vol.volume);
+		printk("snd_set_volume %d %d %d\n", vol.device, vol.method, vol.volume);
 
 		msm_rpc_setup_req(&vmsg.hdr, RPC_SND_PROG, RPC_SND_VERS, SND_SET_VOLUME_PROC);
-
 		rc = msm_rpc_write(snd->ept, &vmsg, sizeof(vmsg));
+
+		break;
+		
+	case SND_GET_NUM_ENDPOINTS:
+		if (copy_to_user((void __user *)arg,
+				&snd->snd_epts->num, sizeof(unsigned))) {
+			pr_err("snd_ioctl get endpoint: invalid pointer.\n");
+			rc = -EFAULT;
+		}
 		break;
 
+	case SND_GET_ENDPOINT:
+		rc = get_endpoint(snd, arg);
+		break;
+		
 	default:
 		pr_err("snd_ioctl unknown command.\n");
 		rc = -EINVAL;
@@ -283,14 +336,16 @@ static int snd_release(struct inode *inode, struct file *file)
 struct msm_rpc_endpoint *create_rpc_connect(uint32_t prog,
 					uint32_t vers, unsigned flags)
 {
+	struct snd_ctxt *snd = &the_snd;
+	
 	mutex_lock(&rpc_lock);
-	if (snd_ept == NULL) {
-		snd_ept = msm_rpc_connect(prog, vers, flags);
-		if (IS_ERR(snd_ept))
+	if (snd->ept == NULL) {
+		snd->ept = msm_rpc_connect(prog, vers, flags);
+		if (IS_ERR(snd->ept))
 			pr_err("snd: failed to connect snd svc\n");
 	}
 	mutex_unlock(&rpc_lock);
-	return snd_ept;
+	return snd->ept;
 }
 EXPORT_SYMBOL(create_rpc_connect);
 
@@ -365,14 +420,33 @@ struct miscdevice snd_misc = {
 	.fops	= &snd_fops,
 };
 
-static int __init snd_init(void)
+static int snd_probe(struct platform_device *pdev)
 {
 	struct snd_ctxt *snd = &the_snd;
 
 	mutex_init(&snd->lock);
 	mutex_init(&rpc_lock);
 	snd->inited = 0;
+
+    snd->snd_epts = (struct msm_snd_endpoints *)pdev->dev.platform_data;
+
+    /* Find the idle sound device */
+    IdleDeviceID = get_idle_deviceid();
+
 	return misc_register(&snd_misc);
 }
 
-device_initcall(snd_init);
+static struct platform_driver snd_plat_driver = {
+	.probe = snd_probe,
+	.driver = {
+		.name = "msm_snd",
+		.owner = THIS_MODULE,
+	},
+};
+
+static int __init snd_init(void)
+{
+	return platform_driver_register(&snd_plat_driver);
+}
+
+module_init(snd_init);

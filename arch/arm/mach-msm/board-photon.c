@@ -73,6 +73,7 @@
 #include <mach/htc_headset_mgr.h>
 #include <mach/htc_headset_gpio.h>
 #include <mach/htc_headset_microp.h>
+#include <mach/htc_acoustic_wince.h>
 
 #include "devices.h"
 #include "board-photon.h"
@@ -437,6 +438,37 @@ static struct pwr_sink liberty_pwrsink_table[] = {
 	},
 };
 
+
+#define SND(num, desc) { .name = desc, .id = num }
+static struct snd_endpoint snd_endpoints_list[] = {
+	SND(0, "HANDSET"),
+	SND(1, "SPEAKER"),
+	SND(2, "HEADSET"),
+	SND(2, "NO_MIC_HEADSET"),
+	SND(3, "BT"),
+	SND(3, "BT_EC_OFF"),
+
+	SND(13, "SPEAKER_MIC"),
+
+	SND(0x11, "IDLE"),
+	SND(256, "CURRENT"),
+};
+#undef SND
+
+static struct msm_snd_endpoints photon_snd_endpoints = {
+        .endpoints = snd_endpoints_list,
+        .num = ARRAY_SIZE(snd_endpoints_list),
+};
+
+static struct platform_device photon_snd = {
+	.name = "msm_snd",
+	.id = -1,
+	.dev	= {
+		.platform_data = &photon_snd_endpoints,
+	},
+};
+
+
 static int liberty_pwrsink_resume_early(struct platform_device *pdev)
 {
 	htc_pwrsink_set(PWRSINK_SYSTEM_LOAD, 7);
@@ -641,6 +673,11 @@ static struct platform_device liberty_timed_gpios = {
 	},
 };
 
+/* acoustic stuf for photon */
+extern void photon_headset_amp(int enabled);
+static struct htc_acoustic_wce_board_data htcphoton_acoustic_data = {
+    .set_headset_amp = photon_headset_amp,
+};
 
 static struct platform_device *devices[] __initdata = {
 	&msm_device_i2c,
@@ -649,6 +686,7 @@ static struct platform_device *devices[] __initdata = {
 #else
 	&htc_battery_pdev,
 #endif
+    &photon_snd,
 	&msm_camera_sensor_s5k4e1gx,
 	&liberty_rfkill,
 #ifdef CONFIG_HTC_PWRSINK
@@ -656,6 +694,7 @@ static struct platform_device *devices[] __initdata = {
 #endif
 	&capella_cm3602,
 	&liberty_timed_gpios,
+	&acoustic_device,
 };
 
 extern struct sys_timer msm_timer;
@@ -937,6 +976,9 @@ static void __init photon_init(void)
 				MSM_GPIO_TO_INT(LIBERTY_GPIO_UART3_RX));
 #endif
 
+	// Set acoustic device specific parameters
+    htc_acoustic_wce_board_data = &htcphoton_acoustic_data;
+	
 	msm_add_devices();
 	printk("after msm_add_devices()\n");
 

@@ -61,6 +61,7 @@ obj-$(CONFIG_PM) += pm.o
 obj-$(CONFIG_CPU_FREQ) += cpufreq.o
 
 obj-$(CONFIG_HTC_ACOUSTIC) += htc_acoustic.o
+obj-$(CONFIG_HTC_ACOUSTIC_WINCE) += htc_acoustic_wince.o
 obj-$(CONFIG_HTC_ACOUSTIC_QSD) += htc_acoustic_qsd.o
 obj-$(CONFIG_MSM7KV2_AUDIO) += htc_acoustic_7x30.o htc_acdb_7x30.o
 obj-$(CONFIG_SENSORS_AKM8976) += htc_akm_cal.o
