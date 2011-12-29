@@ -121,13 +121,6 @@ static void sdc1_boot_reset(void)
 	*sdc1_clk &= ~(1 << 9);
 }
 
-
-// stub function for now
-int photon_is_nand_boot(void)
-{
-	return 0;
-}
-
 ///////////////////////////////////////////////////////////////////
 
 /* HTC_HEADSET_GPIO Driver */

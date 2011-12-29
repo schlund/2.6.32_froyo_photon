@@ -44,10 +44,6 @@
 #include <mach/msm_smd.h>
 #include "smd_rpcrouter.h"
 
-#if defined(CONFIG_MACH_PHOTON)
-#include "board-photon.h"
-#endif
-
 #define TRACE_R2R_MSG 0
 #define TRACE_R2R_RAW 0
 #define TRACE_RPC_MSG 0
@@ -134,6 +130,9 @@ static struct platform_device rpcrouter_pdev = {
 	.id		= -1,
 };
 
+int hot_boot = 1;
+module_param_named(hot_boot, hot_boot, int, 0);
+
 #define MAX_REPLY 16
 static struct msm_rpc_reply_buff rpc_reply_buff[MAX_REPLY] = {
 	[0 ... (MAX_REPLY-1)].pid = 0xffffffff,
@@ -190,11 +189,9 @@ static int rpcrouter_send_control_msg(union rr_control_msg *msg)
 	unsigned long flags;
 	int need;
 
-	if ((!(msg->cmd == RPCROUTER_CTRL_CMD_HELLO) && !initialized) 
-#if defined(CONFIG_MACH_PHOTON)
-	  && (!(msg->cmd == RPCROUTER_CTRL_CMD_BYE) && !photon_is_nand_boot())
-#endif
-	){
+	if (!
+		(msg->cmd == RPCROUTER_CTRL_CMD_HELLO ||
+		msg->cmd == RPCROUTER_CTRL_CMD_BYE) && !initialized) {
 		printk(KERN_ERR "rpcrouter_send_control_msg(): Warning, "
 		       "router not initialized\n");
 		return -EINVAL;
@@ -452,16 +449,17 @@ static int process_control_msg(union rr_control_msg *msg, int len)
 		RR("x HELLO\n");
 		memset(&ctl, 0, sizeof(ctl));
 
-#if defined(CONFIG_MACH_PHOTON)
-		if (photon_is_nand_boot())
-		{
-			ctl.cmd = RPCROUTER_CTRL_CMD_HELLO;
+		if (hot_boot) {
+			ctl.cmd = RPCROUTER_CTRL_CMD_BYE;
 			rpcrouter_send_control_msg(&ctl);
+			msleep(50);
 		}
-#else
+
 		ctl.cmd = RPCROUTER_CTRL_CMD_HELLO;
 		rpcrouter_send_control_msg(&ctl);
-#endif
+
+		if (hot_boot)
+			msleep(50);
 
 		initialized = 1;
 
@@ -1359,6 +1357,8 @@ static int msm_rpcrouter_probe(struct platform_device *pdev)
 	rc = msm_rpcrouter_init_devices();
 	if (rc < 0)
 		goto fail_destroy_workqueue;
+	
+	D("RPC Init done\n");
 
 	/* Open up SMD channel 2 */
 	initialized = 0;
@@ -1366,34 +1366,24 @@ static int msm_rpcrouter_probe(struct platform_device *pdev)
 	if (rc < 0)
 		goto fail_remove_devices;
 
+	D("RPCCALL opened\n");
+	
 	queue_work(rpcrouter_workqueue, &work_read_data);
 
-#if defined(CONFIG_MACH_PHOTON)
-	if (!photon_is_nand_boot())
-	{
+	if (hot_boot) {
 		union rr_control_msg msg = { 0 };
-
-		msg.cmd = RPCROUTER_CTRL_CMD_BYE;
-		rpcrouter_send_control_msg(&msg);
-		msleep(50);
-
-		/* wince rpc init */
-        	msg.cmd = RPCROUTER_CTRL_CMD_HELLO;
-		rpcrouter_send_control_msg(&msg);
-		msleep(50);
-	
-	
-	        process_control_msg(&msg, sizeof(msg));
+		msg.cmd = RPCROUTER_CTRL_CMD_HELLO;
+		process_control_msg(&msg, sizeof(msg));
 		msleep(100);
 	}
-#endif	
-
 
 	return 0;
 
  fail_remove_devices:
+	printk(KERN_ERR "RPC smd_open failed\n");
 	msm_rpcrouter_exit_devices();
  fail_destroy_workqueue:
+	printk(KERN_ERR "RPC init failed\n");
 	destroy_workqueue(rpcrouter_workqueue);
 	return rc;
 }
