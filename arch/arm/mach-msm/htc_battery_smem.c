@@ -200,12 +200,17 @@ static int init_battery_settings( struct battery_info_reply *buffer ) {
 
 	if ( batt_vref - batt_vref_half >= 500 ) {
 		// set global correction var
-		htc_adc_a = 625000 / ( batt_vref - batt_vref_half );
-		htc_adc_b = 1250000 - ( batt_vref * htc_adc_a );
+		htc_adc_a = 625000 / (1 + batt_vref - batt_vref_half );
+		htc_adc_b = 1250000 - (batt_vref * htc_adc_a );
 	}
 
 	// calculate the current adc range correction.
 	htc_adc_range = ( batt_vref * 0x1000 ) / 1250;
+	
+	//FIXME: work around division by zero
+	if (!htc_adc_range) {
+		htc_adc_range = 0x1000;
+	}
 
 	if ( get_battery_id_detection( buffer ) < 0 ) {
 		mutex_unlock(&htc_batt_info.lock);
@@ -1013,6 +1018,9 @@ static int htc_battery_get_property(struct power_supply *psy,
 	case POWER_SUPPLY_PROP_CAPACITY:
 		mutex_lock(&htc_batt_info.lock);
 		val->intval = htc_batt_info.rep.level;
+		if (val -> intval < 20) {
+			val->intval = 20;
+		}
 		mutex_unlock(&htc_batt_info.lock);
 		break;
 	default:
