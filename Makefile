@@ -185,10 +185,6 @@ export KBUILD_BUILDHOST := $(SUBARCH)
 ARCH		?= $(SUBARCH)
 CROSS_COMPILE	?= arm-eabi-
 
-# Cotulla: change this path to your tools location
-ARCH=arm
-CROSS_COMPILE=/home/schlund/android/arm-2010.09/bin/arm-none-linux-gnueabi-
-
 # Architecture as present in compile.h
 UTS_MACHINE 	:= $(ARCH)
 SRCARCH 	:= $(ARCH)
