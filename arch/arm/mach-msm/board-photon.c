@@ -440,6 +440,8 @@ static struct snd_endpoint snd_endpoints_list[] = {
 	SND(2, "NO_MIC_HEADSET"),
 	SND(3, "BT"),
 	SND(3, "BT_EC_OFF"),
+	SND(9, "FM_HEADSET"),
+	SND(11, "FM_SPEAKER"),
 
 	SND(13, "SPEAKER_MIC"),
 
