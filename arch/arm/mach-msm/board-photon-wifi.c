@@ -1,4 +1,4 @@
-/* linux/arch/arm/mach-msm/board-liberty-wifi.c
+/* linux/arch/arm/mach-msm/board-photon-wifi.c
 */
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -13,9 +13,9 @@
 
 #include "board-photon.h"
 
-int liberty_wifi_power(int on);
-int liberty_wifi_reset(int on);
-int liberty_wifi_set_carddetect(int on);
+int photon_wifi_power(int on);
+int photon_wifi_reset(int on);
+int photon_wifi_set_carddetect(int on);
 
 #define PREALLOC_WLAN_NUMBER_OF_SECTIONS	4
 #define PREALLOC_WLAN_NUMBER_OF_BUFFERS		160
@@ -77,14 +77,14 @@ static struct resource photon_wifi_resources[] = {
 		.name		= "bcm4329_wlan_irq",
 		.start		= MSM_GPIO_TO_INT(LIBERTY_GPIO_WIFI_IRQ1),
 		.end		= MSM_GPIO_TO_INT(LIBERTY_GPIO_WIFI_IRQ1),
-		.flags          = IORESOURCE_IRQ | IORESOURCE_IRQ_HIGHLEVEL,
+		.flags	= IORESOURCE_IRQ | IORESOURCE_IRQ_HIGHLEVEL | IORESOURCE_IRQ_SHAREABLE,
 	},
 };
 
 static struct wifi_platform_data photon_wifi_control = {
-	.set_power      = liberty_wifi_power,
-	.set_reset      = liberty_wifi_reset,
-	.set_carddetect = liberty_wifi_set_carddetect,
+	.set_power      = photon_wifi_power,
+	.set_reset      = photon_wifi_reset,
+	.set_carddetect = photon_wifi_set_carddetect,
 	.mem_prealloc   = photon_wifi_mem_prealloc,
 };
 
@@ -98,36 +98,6 @@ static struct platform_device photon_wifi_device = {
         },
 };
 
-extern unsigned char *get_wifi_nvs_ram(void);
-
-static unsigned photon_wifi_update_nvs(char *str)
-{
-#define NVS_LEN_OFFSET		0x0C
-#define NVS_DATA_OFFSET		0x40
-	unsigned char *ptr;
-	unsigned len;
-
-	if (!str)
-		return -EINVAL;
-	ptr = get_wifi_nvs_ram();
-	/* Size in format LE assumed */
-	memcpy(&len, ptr + NVS_LEN_OFFSET, sizeof(len));
-
-	/* the last bye in NVRAM is 0, trim it */
-	if (ptr[NVS_DATA_OFFSET + len -1] == 0)
-		len -= 1;
-
-/*	if (ptr[NVS_DATA_OFFSET + len -1] != '\n') {
-		len += 1;
-		ptr[NVS_DATA_OFFSET + len -1] = '\n';
-	}
-*/
-	strcpy(ptr + NVS_DATA_OFFSET + len, str);
-	len += strlen(str);
-	memcpy(ptr + NVS_LEN_OFFSET, &len, sizeof(len));
-	return 0;
-}
-
 static int __init photon_wifi_init(void)
 {
 	int ret;
@@ -136,9 +106,6 @@ static int __init photon_wifi_init(void)
 		return 0;
 
 	printk("%s: start\n", __func__);
-//	photon_wifi_update_nvs("sd_oobonly=1\n");
-/*	liberty_wifi_update_nvs("btc_params80=0\n");
-	liberty_wifi_update_nvs("btc_params6=30\n");*/
 	photon_init_wifi_mem();
 	ret = platform_device_register(&photon_wifi_device);
         return ret;
