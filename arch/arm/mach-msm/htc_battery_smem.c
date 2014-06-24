@@ -200,23 +200,20 @@ static int init_battery_settings( struct battery_info_reply *buffer ) {
 
 	if ( batt_vref - batt_vref_half >= 500 ) {
 		// set global correction var
-		htc_adc_a = 625000 / ( batt_vref - batt_vref_half );
-		htc_adc_b = 1250000 - ( batt_vref * htc_adc_a );
+		htc_adc_a = 625000 / (batt_vref - batt_vref_half );
+		htc_adc_b = 1250000 - (batt_vref * htc_adc_a );
 	}
 
 	// calculate the current adc range correction.
 	htc_adc_range = ( batt_vref * 0x1000 ) / 1250;
-
-	if ( get_battery_id_detection( buffer ) < 0 ) {
-		mutex_unlock(&htc_batt_info.lock);
-		if(debug_mask&DEBUG_LOG)
-			BATT_ERR("Critical Error on: get_battery_id_detection: VREF=%d; 0.5-VREF=%d; ADC_A=%d; ADC_B=%d; htc_adc_range=%d; batt_id=%d; batt_vendor=%d; full_bat=%d\n", \
-			batt_vref, batt_vref_half, htc_adc_a, htc_adc_b, htc_adc_range, buffer->batt_id, batt_vendor, buffer->full_bat);
-		return -EINVAL;
+	
+	//FIXME: work around division by zero
+	if (!htc_adc_range) {
+		htc_adc_range = 0x1000;
 	}
 
 	mutex_unlock(&htc_batt_info.lock);
-	
+
 	if ( htc_get_batt_info( buffer ) < 0 )
 		return -EINVAL;
 
@@ -593,7 +590,7 @@ static int htc_battery_temperature_lut( int av_index )
 #define CHARGE_STATUS_AGESIZE 6
 static int charge_status_age[CHARGE_STATUS_AGESIZE];
 #endif
-static int old_level = -1;
+static int old_level = 0;
 static int charge_curr_ref = 0;
 static long current_loaded_mAs = 0;
 static int max_curr = 0;
@@ -768,12 +765,17 @@ static void fix_batt_values(struct battery_info_reply *buffer) {
 		buffer->batt_temp = buffer->batt_tempRAW;
 }  
 
-void printBattBuff(struct battery_info_reply *buffer,char *txt)
+void printBattBuff(struct battery_info_reply *b,char *txt)
 {
 #if 0
-	printk( "r0bin %s: batt_id=%d;volt=%d;tempRaw=%dC;temp=%dC;current=%d;discharge=%d;LEVEL=%d;charging src=%d;charging?%d;adc_range=%d\n",
-			txt,buffer->batt_id,buffer->batt_vol,buffer->batt_tempRAW,buffer->batt_temp,
-			buffer->batt_current,buffer->batt_discharge,buffer->level,buffer->charging_source,buffer->charging_enabled,htc_adc_range);
+	printk("[BAT %s] bat_id=%d batt_vol=%d batt_temp=%d\n"
+		"batt_current=%d batt_discharge=%d level=%d\n"
+		"ch_src=%d ch_ena=%d full_bat=%d tempRAW=%d\n",
+		txt,
+		b->batt_id, b->batt_vol, b->batt_temp,
+		b->batt_current, b->batt_discharge,
+		b->level, b->charging_source, b->charging_enabled,
+		b->full_bat, b->batt_tempRAW);
 #endif
 }
 
@@ -815,7 +817,7 @@ static int htc_get_batt_smem_info(struct battery_info_reply *buffer)
 	buffer->batt_tempRAW = batt_16->batt_temp;
 	buffer->batt_id = batt_16->batt_id;
 	buffer->batt_discharge = batt_16->batt_discharge;
-	//printBattBuff(buffer,"RAW VALUES");
+	printBattBuff(buffer,"RAW VALUES");
 	
 	return 0;
 }
@@ -823,16 +825,7 @@ static int htc_get_batt_smem_info(struct battery_info_reply *buffer)
 /* usage: backup batteryinfo data */
 void memcpyBattInfo(struct battery_info_reply *dest, struct battery_info_reply *source)
 {
-	dest->batt_id = source->batt_id;
-	dest->batt_vol = source->batt_vol;
-	dest->batt_temp = source->batt_temp;
-	dest->batt_current = source->batt_current;
-	dest->batt_discharge = source->batt_discharge;
-	dest->level = source->level;
-	dest->charging_source = source->charging_source;
-	dest->charging_enabled = source->charging_enabled;
-	dest->full_bat = source->full_bat;
-	dest->batt_tempRAW = source->batt_tempRAW;
+	memcpy(dest, source, sizeof(struct battery_info_reply));
 }
 
 /* this is the main function that computes battery percentage */
@@ -840,7 +833,7 @@ static int htc_get_batt_info(struct battery_info_reply *buffer_answer)
 {
 	unsigned int time_now;
 	struct battery_info_reply buffer;
-	
+
 	// sanity checks
 	if ( buffer_answer == NULL )
 		return -EINVAL;
@@ -848,6 +841,10 @@ static int htc_get_batt_info(struct battery_info_reply *buffer_answer)
 		BATT_ERR("smem_offset not set\n" );
 		return -EINVAL;
 	}
+
+	//otherwise, we lose full capacity and other stuff
+	//who the f made it sooo complicated?
+	memcpyBattInfo(&buffer, buffer_answer);
 
 	//don't stress our driver! minimum interval = 1sec
 	time_now = jiffies_to_msecs(jiffies);
@@ -924,6 +921,8 @@ static int htc_get_batt_info(struct battery_info_reply *buffer_answer)
 	memcpyBattInfo( &old_batt_info, &buffer);
 	/* return computed values to caller */
 	memcpyBattInfo( buffer_answer, &buffer);
+	
+	printBattBuff(buffer_answer, "after answer <- buffer");
 	
 	printk( "%s called: batt_id=%d;volt=%d;tempRaw=%dC;temp=%dC;current=%d;discharge=%d;LEVEL=%d;charging src=%d;charging?%d;adc_range=%d\n",
 			__func__,buffer.batt_id,buffer.batt_vol,buffer.batt_tempRAW,buffer.batt_temp,
@@ -1134,6 +1133,8 @@ static int htc_battery_thread(void *data)
 	int percent_tab[BATT_SAMPLES_NUMBER];
 	int tab_index = 0;
 	int i;
+
+	init_battery_settings(&htc_batt_data_smooth);
 	
 	//struct battery_info_reply buffer;
 	daemonize("battery");
@@ -1226,6 +1227,11 @@ static int htc_battery_thread(void *data)
 static int htc_battery_probe(struct platform_device *pdev)
 {
 	int i, rc;
+
+	memset(&htc_batt_info, 0, sizeof(htc_batt_info));
+	memset(&old_batt_info, 0, sizeof(old_batt_info));
+	
+	mutex_init(&htc_batt_info.lock);
 	htc_batt_info.resources = (smem_batt_t *)pdev->dev.platform_data;
 
 	/* sanity checks */
@@ -1254,15 +1260,23 @@ static int htc_battery_probe(struct platform_device *pdev)
 
 	/* create htc detail attributes */
 	htc_battery_create_attrs(htc_power_supplies[CHARGER_BATTERY].dev);
+	
+	//Read smem once to initialize it if booting cold
+	get_battery_id_detection(&htc_batt_info.rep);
+	htc_get_batt_smem_info(&htc_batt_info.rep);
+	//who the fuck wrote this crap?
+	mutex_unlock(&htc_batt_info.lock);
 
 	/* init static battery settings */
 	if ( init_battery_settings( &htc_batt_info.rep ) < 0)
 		BATT_ERR("%s: init battery settings failed\n", __FUNCTION__);
+	
+	printk("[BAT]: initialized settings");
 
 	is_battery_initialized = 1;
 
 	htc_batt_info.update_time = jiffies;
-	
+
 	/* lauch thread to poll battery status every x seconds */
 	kernel_thread(htc_battery_thread, NULL, CLONE_KERNEL);
 	
@@ -1327,7 +1341,6 @@ static int __init htc_battery_init(void)
 	// times a second which sooner or later get's the device to freeze when usb
 	// is connected
 	wake_lock_init(&vbus_wake_lock, WAKE_LOCK_IDLE, "vbus_present");
-	mutex_init(&htc_batt_info.lock);
 	usb_register_notifier(&usb_status_notifier);
 	g_vbus_notifier_work_queue = create_workqueue("vbus-notifier");
 	if (g_vbus_notifier_work_queue == NULL) {
